@@ -63,7 +63,6 @@
     return { avgWpm, daysDiff };
   }
 
-  // reactive helpers
   $: arcTotal     = 7;
   $: articleCount = articles.length;
   $: arcLabel     = articleCount >= arcTotal ? 'Fully personalized' : `Article ${articleCount} of ${arcTotal}`;
@@ -78,23 +77,20 @@
   $: goodPct = Math.round(((stats?.samples_by_class.just_right ?? 0) / total) * 100);
   $: easyPct = Math.round(((stats?.samples_by_class.too_easy   ?? 0) / total) * 100);
 
-  $: allSamples  = lsGet('airia_training_samples', []);
-  $: insights    = getInsights(allSamples);
+  $: allSamples   = lsGet('airia_training_samples', []);
+  $: insights     = getInsights(allSamples);
   $: uniqueGenres = [...new Set(articles.map(a => a.classification?.broad_genre).filter(Boolean))];
 </script>
 
-<div class="stats-page">
-
-  <!-- ── Top bar ── -->
-  <div class="stats-topbar">
-    <div class="pg-logo">AIRIA</div>
-    <nav class="pg-nav">
-      <a href="/"              class="pg-navitem">Reader</a>
-      <span                    class="pg-navitem active">Your data</span>
-      <a href="/infopage"  class="pg-navitem">How it works</a>
-    </nav>
-    <a href="/" class="pg-back">← Reader</a>
+<nav class="topnav">
+  <a href="/" class="topnav-logo">AIRIA</a>
+  <div class="topnav-links">
+    <a href="/stats"    class="topnav-link active">Your data</a>
+    <a href="/infopage" class="topnav-link">How it works</a>
   </div>
+</nav>
+
+<div class="stats-page">
 
   {#if loading}
     <div class="stats-loading">Loading…</div>
@@ -102,7 +98,6 @@
 
     <div class="stats-body">
 
-      <!-- ── Header row ── -->
       <div class="stats-header-row">
         <div>
           <h1 class="stats-page-title">Your data</h1>
@@ -126,7 +121,6 @@
         </div>
       </div>
 
-      <!-- ── Stats strip ── -->
       <div class="stats-strip">
         <div class="strip-stat">
           <div class="strip-val">{stats.total_samples}</div>
@@ -154,7 +148,6 @@
         </div>
       </div>
 
-      <!-- ── Mid row ── -->
       <div class="stats-mid-row">
 
         <div class="stats-card">
@@ -214,7 +207,6 @@
 
       </div>
 
-      <!-- ── Articles table ── -->
       <div class="table-section">
         <div class="table-header-row">
           <span class="table-title">Ingested articles</span>

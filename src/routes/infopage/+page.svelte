@@ -2,28 +2,22 @@
   // No data needed — this is a static explainer page
 </script>
 
-<div class="hiw-page">
-
-  <!-- ── Top bar ── -->
-  <div class="stats-topbar">
-    <div class="pg-logo">AIRIA</div>
-    <nav class="pg-nav">
-      <a href="/"             class="pg-navitem">Reader</a>
-      <a href="/stats"        class="pg-navitem">Your data</a>
-      <a href="/infopage"     class="pg-navitem">How it works    </a>
-    </nav>
-    <a href="/" class="pg-back">← Reader</a>
+<nav class="topnav">
+  <a href="/" class="topnav-logo">AIRIA</a>
+  <div class="topnav-links">
+    <a href="/stats"    class="topnav-link">Your data</a>
+    <a href="/infopage" class="topnav-link active">How it works</a>
   </div>
+</nav>
 
+<div class="hiw-page">
   <div class="hiw-body">
 
-    <!-- ── Hero ── -->
     <div class="hiw-hero">
       <h1 class="hiw-hero-title">AIRIA learns how you read,<br>then helps where you need it.</h1>
       <p class="hiw-hero-sub">A spiking neural network watches your reading behavior paragraph by paragraph, building a personal model of when you struggle and when you don't. Interventions appear only when the data says you need them.</p>
     </div>
 
-    <!-- ── Arc timeline ── -->
     <div class="hiw-section-label">The arc — your first 7 articles</div>
     <div class="hiw-timeline">
 
@@ -90,7 +84,6 @@
 
     <div class="hiw-divider"></div>
 
-    <!-- ── System flow ── -->
     <div class="hiw-section-label">The system — three layers</div>
     <div class="hiw-flow">
       <div class="hiw-flow-step">
@@ -112,29 +105,24 @@
 
     <div class="hiw-divider"></div>
 
-    <!-- ── Intervention examples ── -->
     <div class="hiw-section-label">What interventions look like</div>
     <div class="hiw-int-row">
-
       <div class="hiw-int-card">
         <span class="hiw-int-level">Level 2</span>
         <div class="hiw-int-title">Full rewrite</div>
         <div class="hiw-int-desc">The whole paragraph is rewritten in simpler language while preserving the core meaning. Triggered when the article's genre difficulty score is between 0.5 and 0.7 — technical but not highly specialized.</div>
         <div class="hiw-int-example">The F-35 program has officially labeled the heat damage issues in the B and C variants as its most serious deficiency classification — meaning they directly threaten the aircraft's core combat missions.</div>
       </div>
-
       <div class="hiw-int-card strong">
         <span class="hiw-int-level">Level 3</span>
         <div class="hiw-int-title">Surgical annotation</div>
         <div class="hiw-int-desc">Only the hard parts are touched. Domain terms get inline definitions, complex syntax gets untangled. The rest stays exactly as written. Triggered when genre difficulty is above 0.7 — dense technical or academic content.</div>
         <div class="hiw-int-example">The F-35 Joint Program Office has classified the issues as <strong>category 1 deficiencies</strong> <em style="color:#aaa;">[most serious classification — directly threatens mission capability]</em> for the B and C models.</div>
       </div>
-
     </div>
 
     <div class="hiw-divider"></div>
 
-    <!-- ── Privacy ── -->
     <div class="hiw-privacy">
       <div class="hiw-privacy-icon">⊘</div>
       <div>

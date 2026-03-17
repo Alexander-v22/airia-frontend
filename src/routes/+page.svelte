@@ -9,20 +9,17 @@
             return raw ? JSON.parse(raw) : fallback;
         } catch { return fallback; }
     }
-
     function lsSet(key, value) {
         try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
     }
-
     function lsGetRaw(key) {
         try { return localStorage.getItem(key); } catch { return null; }
     }
-
     function lsSetRaw(key, value) {
         try { localStorage.setItem(key, value); } catch {}
     }
 
-    // ─── Persistent state (localStorage) ────────────────────────────────────
+    // ─── Persistent state ────────────────────────────────────────────────────
     let trainingSamples = lsGet('airia_training_samples', []);
     let articles        = lsGet('airia_articles', []);
 
@@ -41,20 +38,17 @@
         };
     }
 
-    // ─── Reading mode ────────────────────────────────────────────────────────
+    // ─── Reading state ───────────────────────────────────────────────────────
     let mode             = $state("focused");
-    let currentLevel     = $state(1);
     let currentParagraph = $state(0);
-
-    let urlInput      = $state("");
-    let isLoadingUrl  = $state(false);
-    let urlError      = $state("");
-    let customText    = $state(null);
-    let reading       = $state(false);
+    let urlInput         = $state("");
+    let isLoadingUrl     = $state(false);
+    let urlError         = $state("");
+    let customText       = $state(null);
+    let reading          = $state(false);
 
     function getParagraphs() {
-        if (customText) return customText.content.split('\n\n');
-        return texts[currentLevel].content.split('\n\n');
+        return customText?.content.split('\n\n') ?? [];
     }
 
     // ─── Timing ──────────────────────────────────────────────────────────────
@@ -74,9 +68,9 @@
     function getSessionStats() {
         const completed = paragraphMetrics.filter(m => m);
         if (!completed.length) return { avgWpm: 0, variance: 0, totalTime: 0 };
-        const wpms      = completed.map(m => m.wpm);
-        const avgWpm    = wpms.reduce((a, b) => a + b, 0) / wpms.length;
-        const variance  = Math.sqrt(wpms.map(w => Math.pow(w - avgWpm, 2)).reduce((a, b) => a + b, 0) / wpms.length);
+        const wpms   = completed.map(m => m.wpm);
+        const avgWpm = wpms.reduce((a, b) => a + b, 0) / wpms.length;
+        const variance = Math.sqrt(wpms.map(w => Math.pow(w - avgWpm, 2)).reduce((a, b) => a + b, 0) / wpms.length);
         const totalTime = completed.reduce((a, m) => a + m.timeSeconds, 0);
         return { avgWpm: Math.round(avgWpm), variance: Math.round(variance), totalTime: Math.round(totalTime) };
     }
@@ -99,11 +93,11 @@
         };
     }
 
-    // ─── SNN temporal membrane state (session only, never persisted) ─────────
-    let sessionMem1       = $state(null);
-    let sessionMem2       = $state(null);
-    let sessionMem3       = $state(null);
-    let membraneCharge    = $state(0);
+    // ─── SNN membrane state ──────────────────────────────────────────────────
+    let sessionMem1    = $state(null);
+    let sessionMem2    = $state(null);
+    let sessionMem3    = $state(null);
+    let membraneCharge = $state(0);
 
     // ─── Intervention state ──────────────────────────────────────────────────
     let interventionText      = $state(null);
@@ -112,7 +106,10 @@
     let usingIntervention     = $state(false);
     let interventionLog       = $state([]);
 
-    // ─── Training UI state ───────────────────────────────────────────────────
+    // ─── Pending article ─────────────────────────────────────────────────────
+    let pendingArticleMetadata = $state(null);
+
+    // ─── Training UI ─────────────────────────────────────────────────────────
     let prediction      = $state("keep_same");
     let feedbackGiven   = $state(false);
     let lastFeedback    = $state(null);
@@ -155,7 +152,7 @@
         }
     }
 
-    // ─── Per-paragraph SNN temporal inference ────────────────────────────────
+    // ─── SNN per-paragraph inference ─────────────────────────────────────────
     async function runParagraphSNN(paragraphIndex) {
         try {
             const weights  = lsGetRaw('airia_model_weights');
@@ -181,56 +178,39 @@
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
-
             sessionMem1    = data.mem1;
             sessionMem2    = data.mem2;
             sessionMem3    = data.mem3;
             membraneCharge = data.membrane_charge;
-
             if (data.spiked && data.spike_class === 'too_hard') {
                 await fetchIntervention(paragraphIndex);
             }
         } catch { console.log('SNN paragraph inference failed'); }
     }
 
-    // ─── Fetch intervention from Claude ──────────────────────────────────────
+    // ─── Intervention ─────────────────────────────────────────────────────────
     async function fetchIntervention(paragraphIndex) {
         isLoadingIntervention = true;
         interventionText      = null;
         interventionParagraph = paragraphIndex;
-
         try {
             const paragraphText   = getParagraphs()[paragraphIndex];
             const genreDifficulty = customText?.classification?.genre_difficulty ?? 0.5;
             const specificGenre   = customText?.classification?.specific_genre ?? 'general';
-
             const res  = await fetch('https://web-production-a3b6.up.railway.app/intervene', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    paragraph:        paragraphText,
-                    genre_difficulty: genreDifficulty,
-                    specific_genre:   specificGenre
-                })
+                body: JSON.stringify({ paragraph: paragraphText, genre_difficulty: genreDifficulty, specific_genre: specificGenre })
             });
             const data = await res.json();
             interventionText = data.rewritten;
-            interventionLog  = [...interventionLog, {
-                paragraphIndex,
-                level:     data.level,
-                timestamp: new Date().toISOString()
-            }];
+            interventionLog  = [...interventionLog, { paragraphIndex, level: data.level, timestamp: new Date().toISOString() }];
         } catch { console.log('Intervention fetch failed'); }
         isLoadingIntervention = false;
     }
 
-    function dismissIntervention() {
-        interventionText      = null;
-        interventionParagraph = null;
-        usingIntervention     = false;
-    }
-
-    function useIntervention() { usingIntervention = true; }
+    function dismissIntervention() { interventionText = null; interventionParagraph = null; usingIntervention = false; }
+    function useIntervention()     { usingIntervention = true; }
 
     // ─── Navigation ──────────────────────────────────────────────────────────
     async function nextParagraph() {
@@ -273,7 +253,6 @@
             const weights = lsGetRaw('airia_model_weights');
             const payload = { ...getNormalized() };
             if (weights) payload.weights = weights;
-
             const res  = await fetch('https://web-production-a3b6.up.railway.app/predict', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -286,23 +265,27 @@
         } catch { console.log('Backend not connected'); }
     }
 
-    // ─── Feedback: save to localStorage ──────────────────────────────────────
+    // ─── Feedback ────────────────────────────────────────────────────────────
     function submitFeedback(feedback) {
         const sample = {
             features:      Object.values(getNormalized()),
             label:         feedback,
             timestamp:     new Date().toISOString(),
-            article_title: customText?.title ?? texts[currentLevel].title
+            article_title: customText?.title ?? 'Unknown'
         };
-
         trainingSamples = [...trainingSamples, sample];
         lsSet('airia_training_samples', trainingSamples);
+
+        if (pendingArticleMetadata) {
+            articles = [...articles, pendingArticleMetadata];
+            lsSet('airia_articles', articles);
+            pendingArticleMetadata = null;
+        }
 
         sampleCount   = trainingSamples.length;
         trainingStats = getTrainingStats();
         feedbackGiven = true;
         lastFeedback  = feedback;
-
         if (sampleCount >= 10 && sampleCount % 5 === 0) retrainModel();
     }
 
@@ -314,17 +297,13 @@
             const weights = lsGetRaw('airia_model_weights');
             const payload = { samples: trainingSamples };
             if (weights) payload.weights = weights;
-
             const res    = await fetch('https://web-production-a3b6.up.railway.app/retrain', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
             const result = await res.json();
-            if (result.weights) {
-                lsSetRaw('airia_model_weights', result.weights);
-                console.log('Updated model weights saved to localStorage');
-            }
+            if (result.weights) lsSetRaw('airia_model_weights', result.weights);
         } catch { console.log('Failed to retrain'); }
         isRetraining = false;
     }
@@ -360,8 +339,6 @@
         startTimer();
     }
 
-    function changeLevel(level) { currentLevel = level; resetSession(); }
-
     function formatTime(seconds) {
         if (!seconds || isNaN(seconds)) return "0:00";
         return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
@@ -379,9 +356,7 @@
                 body: JSON.stringify({ url: urlInput.trim() })
             });
             const data = await res.json();
-
             if (data.status === "error") { urlError = data.content; isLoadingUrl = false; return; }
-
             customText = {
                 title:          data.title,
                 content:        data.content,
@@ -389,8 +364,7 @@
                 lexile:         data.estimated_lexile,
                 classification: data.classification
             };
-
-            const metadata = {
+            pendingArticleMetadata = {
                 id:               `article_${Date.now()}`,
                 url:              urlInput.trim(),
                 title:            data.title,
@@ -400,42 +374,118 @@
                 classification:   data.classification,
                 timestamp:        new Date().toISOString()
             };
-            articles = [...articles, metadata];
-            lsSet('airia_articles', articles);
-
             resetSession();
             urlInput = "";
         } catch { urlError = "Failed to load article. Is backend running?"; }
         isLoadingUrl = false;
     }
 
-    function usePresetText() { customText = null; resetSession(); }
+    function clearArticle() {
+        customText             = null;
+        pendingArticleMetadata = null;
+        resetSession();
+    }
 
     // ─── onMount ──────────────────────────────────────────────────────────────
     onMount(async () => {
         document.addEventListener('visibilitychange', handleVisibilityChange);
         startTimer();
+        initCanvas();
 
         const existingWeights = lsGetRaw('airia_model_weights');
         if (!existingWeights) {
             try {
                 const res  = await fetch('https://web-production-a3b6.up.railway.app/base-weights');
                 const data = await res.json();
-                if (data.weights) {
-                    lsSetRaw('airia_model_weights', data.weights);
-                    console.log('Base model weights saved to localStorage');
-                }
-            } catch { console.log('Could not fetch base weights, backend may not be running'); }
+                if (data.weights) lsSetRaw('airia_model_weights', data.weights);
+            } catch {}
         }
 
         return () => {
             document.removeEventListener('visibilitychange', handleVisibilityChange);
             stopTimer();
+            if (animFrame) cancelAnimationFrame(animFrame);
         };
     });
 
+    // ─── Neural network background canvas ────────────────────────────────────
+    let canvas;
+    let animFrame;
+
+    function initCanvas() {
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const W   = canvas.width  = window.innerWidth;
+        const H   = canvas.height = window.innerHeight;
+
+        // Nodes
+        const NODE_COUNT = 42;
+        const nodes = Array.from({ length: NODE_COUNT }, () => ({
+            x:    Math.random() * W,
+            y:    Math.random() * H,
+            vx:   (Math.random() - 0.5) * 0.18,
+            vy:   (Math.random() - 0.5) * 0.18,
+            r:    1.5 + Math.random() * 2,
+            pulse: Math.random() * Math.PI * 2,   // phase offset
+            pulseSpeed: 0.012 + Math.random() * 0.018
+        }));
+
+        // Connections: only pairs within threshold distance
+        const THRESHOLD = 180;
+
+        function draw(t) {
+            ctx.clearRect(0, 0, W, H);
+
+            // Update positions
+            for (const n of nodes) {
+                n.x += n.vx;
+                n.y += n.vy;
+                if (n.x < 0 || n.x > W) n.vx *= -1;
+                if (n.y < 0 || n.y > H) n.vy *= -1;
+                n.pulse += n.pulseSpeed;
+            }
+
+            // Draw connections
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const a  = nodes[i];
+                    const b  = nodes[j];
+                    const dx = a.x - b.x;
+                    const dy = a.y - b.y;
+                    const d  = Math.sqrt(dx * dx + dy * dy);
+                    if (d < THRESHOLD) {
+                        // flicker: combine both nodes' pulses
+                        const flicker = (Math.sin(a.pulse) + Math.sin(b.pulse)) * 0.25 + 0.5;
+                        const alpha   = (1 - d / THRESHOLD) * 0.09 * flicker;
+                        ctx.strokeStyle = `rgba(0,0,0,${alpha})`;
+                        ctx.lineWidth   = 0.7;
+                        ctx.beginPath();
+                        ctx.moveTo(a.x, a.y);
+                        ctx.lineTo(b.x, b.y);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            // Draw nodes
+            for (const n of nodes) {
+                const glow  = (Math.sin(n.pulse) * 0.5 + 0.5);
+                const alpha = 0.12 + glow * 0.22;
+                const r     = n.r + glow * 1.2;
+                ctx.beginPath();
+                ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+                ctx.fill();
+            }
+
+            animFrame = requestAnimationFrame(draw);
+        }
+
+        animFrame = requestAnimationFrame(draw);
+    }
+
     // ─── Derived ─────────────────────────────────────────────────────────────
-    let membranePercent = $derived(Math.round(membraneCharge * 100));
+    let membranePercent     = $derived(Math.round(membraneCharge * 100));
     let activeParagraphText = $derived(
         usingIntervention && interventionParagraph === currentParagraph
             ? interventionText
@@ -443,11 +493,82 @@
     );
 </script>
 
+<!-- ══════════════════════════════════════════════════════════════════
+     TOP NAV — always visible
+     ══════════════════════════════════════════════════════════════════ -->
+<nav class="topnav">
+    <span class="topnav-logo">AIRIA</span>
+    <div class="topnav-links">
+        <a href="/stats"    class="topnav-link">Your data</a>
+        <a href="/infopage" class="topnav-link">How it works</a>
+    </div>
+</nav>
+
+{#if !customText}
+<!-- ══════════════════════════════════════════════════════════════════
+     HERO — shown when no article is loaded
+     ══════════════════════════════════════════════════════════════════ -->
+<div class="hero">
+    <canvas bind:this={canvas} class="hero-canvas"></canvas>
+
+    <div class="hero-content">
+        <h1 class="hero-logo">AIRIA</h1>
+        <p class="hero-tagline">Adaptive reading, powered by a spiking neural network.</p>
+
+        <!-- URL loader -->
+        <div class="hero-url-row">
+            <input
+                type="text"
+                placeholder="Paste an article URL to begin"
+                bind:value={urlInput}
+                class="hero-url-input"
+                disabled={isLoadingUrl}
+                onkeydown={(e) => e.key === 'Enter' && loadArticleFromUrl()}
+            />
+            <button class="hero-url-btn" onclick={loadArticleFromUrl} disabled={isLoadingUrl}>
+                {isLoadingUrl ? '…' : '→'}
+            </button>
+        </div>
+        {#if urlError}
+            <p class="hero-url-error">{urlError}</p>
+        {/if}
+
+        <!-- Steps -->
+        <div class="hero-steps">
+            <div class="hero-step">
+                <span class="hero-step-num">01</span>
+                <span class="hero-step-title">Load an article</span>
+                <span class="hero-step-desc">Paste any URL above. AIRIA extracts the text and classifies its genre and difficulty before you read a word.</span>
+            </div>
+            <div class="hero-step">
+                <span class="hero-step-num">02</span>
+                <span class="hero-step-title">Read paragraph by paragraph</span>
+                <span class="hero-step-desc">Press Start on each paragraph. A spiking neural network watches your reading speed in real time and intervenes when it detects struggle.</span>
+            </div>
+            <div class="hero-step">
+                <span class="hero-step-num">03</span>
+                <span class="hero-step-title">Finish and rate it</span>
+                <span class="hero-step-desc">After the last paragraph, tell AIRIA how the text felt. Your rating trains the model so future sessions adapt to you personally.</span>
+            </div>
+            <div class="hero-step">
+                <span class="hero-step-num">04</span>
+                <span class="hero-step-title">Watch it personalize</span>
+                <span class="hero-step-desc">After 10 sessions, AIRIA retrains on your data. By article 7, interventions fire silently — only when you actually need them.</span>
+            </div>
+        </div>
+
+        <a href="/infopage" class="hero-learn">Deep dive into how it works →</a>
+    </div>
+</div>
+
+{:else}
+<!-- ══════════════════════════════════════════════════════════════════
+     READER — shown when article is loaded
+     ══════════════════════════════════════════════════════════════════ -->
 <div class="app">
 
-    <!-- ── Left Sidebar ── -->
+    <!-- Left Sidebar -->
     <aside class="left-sidebar">
-        <div class="sidebar-logo">AIRIA</div>
 
         <div class="url-input-section">
             <div class="sidebar-label">Load article</div>
@@ -463,15 +584,11 @@
                     {isLoadingUrl ? '…' : '↓'}
                 </button>
             </div>
-            {#if urlError}
-                <div class="url-error">{urlError}</div>
-            {/if}
-            {#if customText}
-                <div class="article-loaded">
-                    <span>{customText.title.slice(0, 28)}{customText.title.length > 28 ? '…' : ''}</span>
-                    <button class="clear-btn" onclick={usePresetText}>×</button>
-                </div>
-            {/if}
+            {#if urlError}<div class="url-error">{urlError}</div>{/if}
+            <div class="article-loaded">
+                <span>{customText.title.slice(0, 28)}{customText.title.length > 28 ? '…' : ''}</span>
+                <button class="clear-btn" onclick={clearArticle}>×</button>
+            </div>
         </div>
 
         <div class="sidebar-divider"></div>
@@ -532,43 +649,25 @@
             {/each}
         </div>
 
-        {#if !customText}
-            <div class="sidebar-divider"></div>
-            <div class="sidebar-label">Text level</div>
-            <div class="level-row">
-                <button class="level-btn" class:active={currentLevel === 0} onclick={() => changeLevel(0)}>Easy</button>
-                <button class="level-btn" class:active={currentLevel === 1} onclick={() => changeLevel(1)}>Medium</button>
-                <button class="level-btn" class:active={currentLevel === 2} onclick={() => changeLevel(2)}>Hard</button>
-            </div>
-        {/if}
-
-        <div class="sidebar-divider"></div>
-        <a href="/stats" class="nav-link">Your data</a>
-        <a href="/infopage" class="nav-link">How it works</a>
     </aside>
 
-    <!-- ── Main ── -->
+    <!-- Main -->
     <main>
         <header class="article-header">
             <div class="article-meta">
-                {#if customText}
-                    <span class="meta-tag dark">{customText.classification?.broad_genre ?? 'article'}</span>
-                    <span class="meta-tag">{customText.lexile}L</span>
-                    {#if customText.classification?.specific_genre}
-                        <span class="meta-tag">{customText.classification.specific_genre}</span>
-                    {/if}
-                {:else}
-                    <span class="meta-tag">{texts[currentLevel].level}</span>
+                <span class="meta-tag dark">{customText.classification?.broad_genre ?? 'article'}</span>
+                <span class="meta-tag">{customText.lexile}L</span>
+                {#if customText.classification?.specific_genre}
+                    <span class="meta-tag">{customText.classification.specific_genre}</span>
                 {/if}
             </div>
-            <h1 class="article-title">{customText ? customText.title : texts[currentLevel].title}</h1>
+            <h1 class="article-title">{customText.title}</h1>
         </header>
 
         {#if mode === "focused"}
             <div class="focused-reader">
                 <div class="para-num">{String(currentParagraph + 1).padStart(2, '0')} / {String(getParagraphs().length).padStart(2, '0')}</div>
 
-                <!-- Main paragraph card -->
                 <div class="para-card">
                     <p class="para-text">{activeParagraphText}</p>
                     <div class="para-footer">
@@ -587,14 +686,12 @@
                     </div>
                 </div>
 
-                <!-- Intervention loading state -->
                 {#if isLoadingIntervention}
                     <div class="intervention-loading">
                         <span class="int-loading-text">AIRIA is analyzing this paragraph…</span>
                     </div>
                 {/if}
 
-                <!-- Intervention panel -->
                 {#if interventionText && interventionParagraph === currentParagraph && !usingIntervention}
                     <div class="intervention-panel">
                         <div class="int-header">
@@ -642,44 +739,42 @@
         {/if}
     </main>
 
-    <!-- ── Right Sidebar ── -->
+    <!-- Right Sidebar -->
     <aside class="right-sidebar">
         <div class="sidebar-label" style="margin-bottom: 16px;">Training</div>
 
         {#if sessionComplete}
-            <div class="session-complete">
-                <div class="complete-badge">Session complete</div>
+            <div class="complete-badge">Session complete</div>
 
-                <div class="final-stats">
-                    <div class="final-row"><span class="final-key">Avg WPM</span><span class="final-val">{getSessionStats().avgWpm || 0}</span></div>
-                    <div class="final-row"><span class="final-key">Total time</span><span class="final-val">{formatTime(getSessionStats().totalTime)}</span></div>
-                    <div class="final-row"><span class="final-key">Back presses</span><span class="final-val">{backPresses}</span></div>
-                    {#if interventionLog.length > 0}
-                        <div class="final-row"><span class="final-key">Interventions</span><span class="final-val">{interventionLog.length}</span></div>
-                    {/if}
-                </div>
-
-                <button class="analyze-btn" onclick={sendToBackend}>Analyze with SNN</button>
-
-                {#if prediction !== "keep_same"}
-                    <div class="prediction-box">
-                        <span class="prediction-label">Prediction</span>
-                        <span class="prediction-val">{prediction.replace('_', ' ')}</span>
-                    </div>
+            <div class="final-stats">
+                <div class="final-row"><span class="final-key">Avg WPM</span><span class="final-val">{getSessionStats().avgWpm || 0}</span></div>
+                <div class="final-row"><span class="final-key">Total time</span><span class="final-val">{formatTime(getSessionStats().totalTime)}</span></div>
+                <div class="final-row"><span class="final-key">Back presses</span><span class="final-val">{backPresses}</span></div>
+                {#if interventionLog.length > 0}
+                    <div class="final-row"><span class="final-key">Interventions</span><span class="final-val">{interventionLog.length}</span></div>
                 {/if}
-
-                <div class="sidebar-divider"></div>
-
-                <div class="sidebar-label" style="margin-bottom: 10px;">How was this text?</div>
-                <div class="feedback-col">
-                    <button class="fb-btn" class:selected={lastFeedback === 0} onclick={() => submitFeedback(0)} disabled={feedbackGiven}>Too hard</button>
-                    <button class="fb-btn" class:selected={lastFeedback === 1} onclick={() => submitFeedback(1)} disabled={feedbackGiven}>Just right</button>
-                    <button class="fb-btn" class:selected={lastFeedback === 2} onclick={() => submitFeedback(2)} disabled={feedbackGiven}>Too easy</button>
-                </div>
-                {#if feedbackGiven}<p class="feedback-confirm">Saved to your browser</p>{/if}
-
-                <button class="secondary-btn" onclick={resetSession}>Read again</button>
             </div>
+
+            <button class="analyze-btn" onclick={sendToBackend}>Analyze with SNN</button>
+
+            {#if prediction !== "keep_same"}
+                <div class="prediction-box">
+                    <span class="prediction-label">Prediction</span>
+                    <span class="prediction-val">{prediction.replace('_', ' ')}</span>
+                </div>
+            {/if}
+
+            <div class="sidebar-divider"></div>
+
+            <div class="sidebar-label" style="margin-bottom: 10px;">How was this text?</div>
+            <div class="feedback-col">
+                <button class="fb-btn" class:selected={lastFeedback === 0} onclick={() => submitFeedback(0)} disabled={feedbackGiven}>Too hard</button>
+                <button class="fb-btn" class:selected={lastFeedback === 1} onclick={() => submitFeedback(1)} disabled={feedbackGiven}>Just right</button>
+                <button class="fb-btn" class:selected={lastFeedback === 2} onclick={() => submitFeedback(2)} disabled={feedbackGiven}>Too easy</button>
+            </div>
+            {#if feedbackGiven}<p class="feedback-confirm">Saved to your browser</p>{/if}
+
+            <button class="secondary-btn" onclick={resetSession}>Read another</button>
 
         {:else}
             <div class="training-block">
@@ -710,3 +805,4 @@
     </aside>
 
 </div>
+{/if}
