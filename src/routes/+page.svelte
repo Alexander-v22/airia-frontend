@@ -175,7 +175,7 @@
             };
             if (weights) payload.weights = weights;
 
-            const res  = await fetch('http://localhost:8000/predict-paragraph', {
+            const res  = await fetch('https://web-production-a3b6.up.railway.app/predict-paragraph', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -204,7 +204,7 @@
             const genreDifficulty = customText?.classification?.genre_difficulty ?? 0.5;
             const specificGenre   = customText?.classification?.specific_genre ?? 'general';
 
-            const res  = await fetch('http://localhost:8000/intervene', {
+            const res  = await fetch('https://web-production-a3b6.up.railway.app/intervene', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -274,7 +274,7 @@
             const payload = { ...getNormalized() };
             if (weights) payload.weights = weights;
 
-            const res  = await fetch('http://localhost:8000/predict', {
+            const res  = await fetch('https://web-production-a3b6.up.railway.app/predict', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -315,7 +315,7 @@
             const payload = { samples: trainingSamples };
             if (weights) payload.weights = weights;
 
-            const res    = await fetch('http://localhost:8000/retrain', {
+            const res    = await fetch('https://web-production-a3b6.up.railway.app/retrain', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -373,7 +373,7 @@
         isLoadingUrl = true;
         urlError     = "";
         try {
-            const res  = await fetch('http://localhost:8000/ingest-url', {
+            const res  = await fetch('https://web-production-a3b6.up.railway.app/ingest-url', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: urlInput.trim() })
@@ -419,7 +419,7 @@
         const existingWeights = lsGetRaw('airia_model_weights');
         if (!existingWeights) {
             try {
-                const res  = await fetch('http://localhost:8000/base-weights');
+                const res  = await fetch('https://web-production-a3b6.up.railway.app/base-weights');
                 const data = await res.json();
                 if (data.weights) {
                     lsSetRaw('airia_model_weights', data.weights);
