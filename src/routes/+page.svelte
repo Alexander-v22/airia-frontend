@@ -60,9 +60,10 @@
     let blurCount          = $state(0);
 
     function getCurrentWPM() {
-        if (elapsedTime < 1) return 0;
+        if (elapsedTime < 3) return 0;
         const wordCount = getParagraphs()[currentParagraph]?.split(/\s+/).length || 0;
-        return Math.round((wordCount / elapsedTime) * 60);
+        const raw = Math.round((wordCount / elapsedTime) * 60);
+        return Math.min(raw, 600);
     }
 
     function getSessionStats() {
@@ -142,10 +143,11 @@
 
     function recordParagraphMetrics() {
         const timeSpent = (Date.now() - paragraphStartTime) / 1000;
-        if (timeSpent >= 1) {
+        if (timeSpent >= 3) {
             const wordCount = getParagraphs()[currentParagraph].split(/\s+/).length;
+            const raw = Math.round((wordCount / timeSpent) * 60);
             paragraphMetrics[currentParagraph] = {
-                wpm: Math.round((wordCount / timeSpent) * 60),
+                wpm: Math.min(raw, 600),
                 timeSeconds: Math.round(timeSpent * 10) / 10,
                 wordCount
             };
@@ -418,7 +420,6 @@
         const W   = canvas.width  = window.innerWidth;
         const H   = canvas.height = window.innerHeight;
 
-        // Nodes
         const NODE_COUNT = 42;
         const nodes = Array.from({ length: NODE_COUNT }, () => ({
             x:    Math.random() * W,
@@ -426,17 +427,15 @@
             vx:   (Math.random() - 0.5) * 0.18,
             vy:   (Math.random() - 0.5) * 0.18,
             r:    1.5 + Math.random() * 2,
-            pulse: Math.random() * Math.PI * 2,   // phase offset
+            pulse: Math.random() * Math.PI * 2,
             pulseSpeed: 0.012 + Math.random() * 0.018
         }));
 
-        // Connections: only pairs within threshold distance
         const THRESHOLD = 180;
 
         function draw(t) {
             ctx.clearRect(0, 0, W, H);
 
-            // Update positions
             for (const n of nodes) {
                 n.x += n.vx;
                 n.y += n.vy;
@@ -445,7 +444,6 @@
                 n.pulse += n.pulseSpeed;
             }
 
-            // Draw connections
             for (let i = 0; i < nodes.length; i++) {
                 for (let j = i + 1; j < nodes.length; j++) {
                     const a  = nodes[i];
@@ -454,7 +452,6 @@
                     const dy = a.y - b.y;
                     const d  = Math.sqrt(dx * dx + dy * dy);
                     if (d < THRESHOLD) {
-                        // flicker: combine both nodes' pulses
                         const flicker = (Math.sin(a.pulse) + Math.sin(b.pulse)) * 0.25 + 0.5;
                         const alpha   = (1 - d / THRESHOLD) * 0.09 * flicker;
                         ctx.strokeStyle = `rgba(0,0,0,${alpha})`;
@@ -467,7 +464,6 @@
                 }
             }
 
-            // Draw nodes
             for (const n of nodes) {
                 const glow  = (Math.sin(n.pulse) * 0.5 + 0.5);
                 const alpha = 0.12 + glow * 0.22;
@@ -675,7 +671,7 @@
                             {#if paragraphMetrics[currentParagraph]}
                                 <span class="wpm-number">{paragraphMetrics[currentParagraph].wpm}</span>
                                 <span class="wpm-label">WPM</span>
-                            {:else if reading}
+                            {:else if reading && elapsedTime >= 3}
                                 <span class="wpm-number">{getCurrentWPM()}</span>
                                 <span class="wpm-label">WPM live</span>
                             {/if}
