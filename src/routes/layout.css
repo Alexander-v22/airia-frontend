@@ -317,6 +317,109 @@ main {
 }
 .mode-btn.active { background: #000; color: #fff; border-color: #000; }
 
+/* ── Annotation toggle in left sidebar ───────────────────────────────── */
+.annotation-toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.annotation-toggle {
+    font-size: 11px;
+    font-family: 'SF Mono', monospace;
+    padding: 4px 12px;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+    background: #fff;
+    color: #aaa;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.annotation-toggle.on {
+    background: #000;
+    color: #fff;
+    border-color: #000;
+}
+
+.annotation-hint {
+    font-size: 11px;
+    color: #ccc;
+    margin: 6px 0 0;
+}
+
+.annot-loading {
+    font-size: 11px;
+    color: #ccc;
+    font-style: italic;
+}
+
+/* ── Annotated terms in paragraph text ───────────────────────────────── */
+.annotated-term {
+    position: relative;
+    border-bottom: 1.5px dotted #888;
+    cursor: help;
+    display: inline;
+}
+
+.annot-tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #111;
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 8px 12px;
+    border-radius: 6px;
+    white-space: normal;
+    width: 220px;
+    z-index: 50;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.annotated-term:hover .annot-tooltip {
+    display: block;
+}
+
+/* ── Unlock block in right sidebar ───────────────────────────────────── */
+.unlock-block { margin-bottom: 12px; }
+.unlock-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #bbb;
+    margin-bottom: 8px;
+    display: block;
+}
+
+/* ── Progress seg annotated class ────────────────────────────────────── */
+.progress-seg.annotated {
+    background: #555;
+    outline: 2px solid #ccc;
+    outline-offset: 1px;
+}
+
+/* ── Intervention step label ─────────────────────────────────────────── */
+.int-step-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #aaa;
+    margin-bottom: 10px;
+}
+
+.int-annotation {
+    font-size: 12px;
+    color: #bbb;
+    font-style: italic;
+    margin-bottom: 14px;
+    padding-left: 12px;
+    border-left: 2px solid #f0f0f0;
+}
+
 .stat-pair { display: flex; gap: 8px; }
 
 .stat-box {
@@ -516,6 +619,10 @@ main {
     background: #fff;
 }
 
+.intervention-panel.level3 {
+    border-width: 2px;
+}
+
 .int-header {
     display: flex;
     justify-content: space-between;
@@ -567,6 +674,7 @@ main {
     border-radius: 5px;
     cursor: pointer;
 }
+.int-btn-use:hover { background: #222; }
 
 .int-btn-skip {
     padding: 9px 20px;
@@ -923,6 +1031,7 @@ main {
 }
 
 .card-title { font-size: 14px; font-weight: 500; color: #000; margin-bottom: 18px; }
+.card-sub { font-size: 12px; color: #bbb; margin: -12px 0 14px; }
 .card-empty { font-size: 13px; color: #bbb; line-height: 1.65; }
 
 .balance-bar {
@@ -960,6 +1069,34 @@ main {
 }
 .obs-item:last-child { border-bottom: none; }
 .obs-item strong { color: #000; font-weight: 500; }
+
+/* ── Stats page annotation and intervention specific ─────────────────── */
+.term-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+.term-name { font-size: 13px; color: #333; }
+.term-count {
+    font-size: 12px;
+    font-family: 'SF Mono', monospace;
+    color: #aaa;
+    flex-shrink: 0;
+    margin-left: 12px;
+}
+
+.genre-list { display: flex; flex-direction: column; gap: 10px; }
+.genre-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.genre-name { font-size: 13px; color: #333; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.genre-count { font-size: 12px; color: #aaa; flex-shrink: 0; }
+.genre-rewrite { font-size: 11px; color: #bbb; flex-shrink: 0; }
+
+.int-sub { font-size: 11px; color: #bbb; margin-left: 4px; }
 
 .table-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .table-title { font-size: 15px; font-weight: 500; color: #000; }
@@ -1018,7 +1155,7 @@ main {
 
 .hiw-body {
     padding: 52px 64px;
-    max-width: 780px;
+    max-width: 900px;
     margin: 0 auto;
 }
 
@@ -1037,7 +1174,8 @@ main {
 
 .hiw-divider { height: 1px; background: #f0f0f0; margin: 44px 0; }
 
-.hiw-section-label { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: #bbb; margin-bottom: 20px; }
+.hiw-section-label { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: #bbb; margin-bottom: 8px; }
+.hiw-section-sub { font-size: 14px; color: #888; line-height: 1.65; margin-bottom: 24px; }
 
 .hiw-timeline { display: flex; flex-direction: column; }
 .hiw-tl-item { display: flex; gap: 24px; }
@@ -1065,13 +1203,172 @@ main {
 .hiw-flow-title { font-size: 14px; font-weight: 500; color: #000; margin-bottom: 8px; }
 .hiw-flow-desc { font-size: 13px; color: #888; line-height: 1.65; }
 
-.hiw-int-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.hiw-int-card { border: 1px solid #efefef; border-radius: 10px; padding: 20px 22px; }
+/* ── Intervention cards — new three-card layout ──────────────────────── */
+.hiw-int-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+}
+
+.hiw-int-card-col {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.hiw-int-card {
+    border: 1px solid #efefef;
+    border-radius: 10px;
+    padding: 20px 22px;
+    background: #fff;
+}
 .hiw-int-card.strong { border-color: #000; }
-.hiw-int-level { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: #000; border: 1px solid #000; padding: 3px 9px; border-radius: 3px; display: inline-block; margin-bottom: 12px; }
+
+.hiw-int-level {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #000;
+    border: 1px solid #000;
+    padding: 3px 9px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-bottom: 12px;
+}
 .hiw-int-title { font-size: 15px; font-weight: 500; color: #000; margin-bottom: 8px; }
 .hiw-int-desc { font-size: 13px; color: #888; line-height: 1.65; margin-bottom: 14px; }
-.hiw-int-example { background: #fafafa; border-radius: 6px; padding: 14px 16px; font-size: 13px; color: #555; line-height: 1.7; border-left: 2px solid #000; }
+.hiw-int-example {
+    background: #fafafa;
+    border-radius: 6px;
+    padding: 14px 16px;
+    font-size: 13px;
+    color: #555;
+    line-height: 1.7;
+    border-left: 2px solid #000;
+    margin-bottom: 14px;
+}
+
+/* Mock buttons in the primer card */
+.hiw-int-cta-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.hiw-int-btn-demo {
+    display: inline-block;
+    padding: 8px 14px;
+    border-radius: 5px;
+    font-size: 12px;
+    cursor: default;
+    user-select: none;
+}
+
+.hiw-int-btn-demo.dismiss {
+    background: #fff;
+    color: #888;
+    border: 1px solid #e0e0e0;
+}
+
+.hiw-int-btn-demo.use {
+    background: #000;
+    color: #fff;
+    border: 1px solid #000;
+}
+
+/* ── Annotation mode section ─────────────────────────────────────────── */
+.hiw-annotation-block {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+}
+
+.hiw-annotation-desc {
+    font-size: 14px;
+    color: #888;
+    line-height: 1.7;
+    margin: 0 0 16px;
+}
+
+.hiw-annotation-data {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 4px;
+}
+
+.hiw-data-point {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.hiw-data-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #bbb;
+}
+
+.hiw-data-val {
+    font-size: 13px;
+    color: #666;
+    line-height: 1.6;
+}
+
+.hiw-annotation-example {
+    background: #fff;
+    border: 1px solid #efefef;
+    border-radius: 10px;
+    padding: 24px;
+}
+
+.hiw-annot-para {
+    font-size: 15px;
+    line-height: 1.9;
+    color: #1a1a1a;
+    margin: 0 0 14px;
+}
+
+.hiw-annot-caption {
+    font-size: 11px;
+    color: #ccc;
+    margin: 0;
+    font-style: italic;
+}
+
+/* Demo annotation terms used on the infopage — same style as live reader */
+.annotated-term-demo {
+    position: relative;
+    border-bottom: 1.5px dotted #888;
+    cursor: help;
+    display: inline;
+}
+
+.annot-tooltip-demo {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #111;
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 8px 12px;
+    border-radius: 6px;
+    white-space: normal;
+    width: 220px;
+    z-index: 50;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.annotated-term-demo:hover .annot-tooltip-demo {
+    display: block;
+}
 
 .hiw-privacy { border: 1px solid #000; border-radius: 10px; padding: 24px 28px; display: flex; gap: 24px; align-items: flex-start; background: #fff; }
 .hiw-privacy-icon { width: 38px; height: 38px; border: 1.5px solid #000; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 16px; color: #000; }
