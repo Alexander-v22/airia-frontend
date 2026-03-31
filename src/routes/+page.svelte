@@ -23,7 +23,7 @@
     let trainingSamples  = lsGet('airia_training_samples', []);
     let articles         = lsGet('airia_articles', []);
     let annotationLog    = lsGet('airia_annotation_log', []);
-    let interventionLog  = lsGet('airia_intervention_log', []);  // persisted across sessions
+    let interventionLog  = lsGet('airia_intervention_log', []);
     let unlockStatus     = lsGet('airia_unlock_status', { level3_unlocked: false, accepted_interventions: 0 });
 
     function getTrainingStats() {
@@ -94,7 +94,9 @@
               )
             : 0;
 
-        const slowdownRatio = avgWpm > 0 ? Math.min(avgWpm / Math.max(m.wpm, 1), 3) : 1;
+        // slowdown_ratio: avg / this_para, clamped 0-1.
+        // 1.0 = this paragraph was significantly slower than the running average.
+        const slowdownRatio = avgWpm > 0 ? Math.min(avgWpm / Math.max(m.wpm, 1), 1) : 1;
 
         return {
             avg_wpm:         Math.min(m.wpm / 500, 1),
@@ -103,7 +105,7 @@
             completion_rate: getParagraphs().length > 0
                                  ? (paragraphIndex + 1) / getParagraphs().length
                                  : 0,
-            slowdown_ratio:  Math.min(slowdownRatio, 1),
+            slowdown_ratio:  slowdownRatio,
             blur_count:      Math.min(blurCount / 5, 1)
         };
     }
@@ -134,19 +136,16 @@
     let membraneCharge = $state(0);
 
     // ─── Intervention state — two-step flow ──────────────────────────────────
-    // Step 1: primer shown automatically when SNN spikes too_hard.
-    // Step 2: rewrite revealed only if user clicks "I still need help".
-    let interventionData      = $state(null);   // full /intervene response
+    let interventionData      = $state(null);
     let interventionParagraph = $state(null);
     let isLoadingIntervention = $state(false);
-    let showingRewrite        = $state(false);  // true after user requests rewrite
-    let usingRewrite          = $state(false);  // true after user accepts rewrite
-    let sessionInterventions  = $state([]);     // intervention events this session
+    let showingRewrite        = $state(false);
+    let usingRewrite          = $state(false);
+    let sessionInterventions  = $state([]);
 
     // ─── Annotation state ────────────────────────────────────────────────────
-    // Independent of the SNN. User toggles it on; fires after each paragraph.
     let annotationMode       = $state(false);
-    let paragraphAnnotations = $state({});      // { paragraphIndex: [AnnotationTerm] }
+    let paragraphAnnotations = $state({});
     let isLoadingAnnotation  = $state(false);
 
     // ─── Pending article ─────────────────────────────────────────────────────
@@ -197,6 +196,12 @@
     }
 
     // ─── SNN per-paragraph inference ─────────────────────────────────────────
+    // Trigger logic — two paths to intervention:
+    //   1. Binary spike: SNN fires too_hard (clean signal, preferred)
+    //   2. Membrane charge: charge > 0.62 AND slowdown_ratio > 0.75
+    //      (catches fast readers whose absolute WPM looks comfortable
+    //       but whose per-paragraph slowdown is a clear struggle signal)
+    // Path 2 only fires if no intervention is already active for this paragraph.
     async function runParagraphSNN(paragraphIndex) {
         const features = getParagraphFeatures(paragraphIndex);
         if (!features) {
@@ -224,7 +229,21 @@
             sessionMem3    = data.mem3;
             membraneCharge = data.membrane_charge;
 
-            if (data.spiked && data.spike_class === 'too_hard') {
+            // Path 1: clean binary spike
+            const binarySpike = data.spiked && data.spike_class === 'too_hard';
+
+            // Path 2: membrane charge buildup + meaningful slowdown on this paragraph.
+            // slowdown_ratio > 0.75 means this paragraph was at least 25% slower
+            // than the running average — a real dip, not noise.
+            // membrane_charge > 0.62 means the network has been accumulating
+            // struggle signal across prior paragraphs.
+            const chargeSpike =
+                data.membrane_charge > 0.62 &&
+                features.slowdown_ratio > 0.75 &&
+                interventionData === null;  // don't double-fire
+
+            if (binarySpike || chargeSpike) {
+                console.log(`Intervention triggered — binary: ${binarySpike}, charge: ${chargeSpike}, membrane: ${data.membrane_charge.toFixed(2)}, slowdown: ${features.slowdown_ratio.toFixed(2)}`);
                 await fetchIntervention(paragraphIndex);
             }
         } catch (e) {
@@ -253,7 +272,6 @@
             const data = await res.json();
             interventionData = data;
 
-            // Log the event — primer shown, rewrite not yet requested
             const event = {
                 article_id:       pendingArticleMetadata?.id ?? 'unknown',
                 paragraph_index:  paragraphIndex,
@@ -274,7 +292,6 @@
 
     function revealRewrite() {
         showingRewrite = true;
-        // Update last session event: user needed more than primer
         sessionInterventions = sessionInterventions.map((e, i) =>
             i === sessionInterventions.length - 1 ? { ...e, primer_only: false } : e
         );
@@ -282,16 +299,11 @@
 
     function useRewrite() {
         usingRewrite = true;
-        // Update last session event: user accepted the rewrite
         sessionInterventions = sessionInterventions.map((e, i) =>
             i === sessionInterventions.length - 1 ? { ...e, rewrite_used: true } : e
         );
-        // Increment accepted_interventions for Level 3 unlock tracking
         const newCount = unlockStatus.accepted_interventions + 1;
-        unlockStatus = {
-            accepted_interventions: newCount,
-            level3_unlocked:        newCount >= 3
-        };
+        unlockStatus = { accepted_interventions: newCount, level3_unlocked: newCount >= 3 };
         lsSet('airia_unlock_status', unlockStatus);
     }
 
@@ -305,7 +317,7 @@
     // ─── Annotation ──────────────────────────────────────────────────────────
     async function fetchAnnotations(paragraphIndex) {
         if (!annotationMode) return;
-        if (paragraphAnnotations[paragraphIndex] !== undefined) return; // already fetched
+        if (paragraphAnnotations[paragraphIndex] !== undefined) return;
 
         isLoadingAnnotation = true;
         try {
@@ -322,7 +334,6 @@
             const data = await res.json();
             paragraphAnnotations = { ...paragraphAnnotations, [paragraphIndex]: data.terms ?? [] };
 
-            // Persist annotation event if any terms were found
             if (data.terms?.length > 0) {
                 const event = {
                     article_id:       pendingArticleMetadata?.id ?? 'unknown',
@@ -342,13 +353,11 @@
         isLoadingAnnotation = false;
     }
 
-    // Builds paragraph HTML with annotated terms wrapped in tooltip spans.
     function buildAnnotatedHTML(paragraphIndex) {
         const text  = getParagraphs()[paragraphIndex] ?? '';
         const terms = paragraphAnnotations[paragraphIndex];
         if (!terms || terms.length === 0) return escapeHtml(text);
 
-        // Sort descending by start offset so splicing doesn't shift later indices
         const sorted = [...terms].sort((a, b) => b.start - a.start);
         let result = text;
         for (const t of sorted) {
@@ -379,14 +388,12 @@
         const idx = currentParagraph;
 
         if (currentParagraph < getParagraphs().length - 1) {
-            // Run SNN and annotation in parallel — neither blocks the other
             await Promise.all([runParagraphSNN(idx), fetchAnnotations(idx)]);
             currentParagraph++;
             startTimer();
         } else {
             await Promise.all([runParagraphSNN(idx), fetchAnnotations(idx)]);
             stopTimer();
-            // Persist session intervention log to localStorage
             interventionLog = [...interventionLog, ...sessionInterventions];
             lsSet('airia_intervention_log', interventionLog);
             sessionComplete = true;
@@ -661,9 +668,6 @@
 </nav>
 
 {#if !customText}
-<!-- ══════════════════════════════════════════════════════════════════
-     HERO
-     ══════════════════════════════════════════════════════════════════ -->
 <div class="hero">
     <canvas bind:this={canvas} class="hero-canvas"></canvas>
     <div class="hero-content">
@@ -710,9 +714,6 @@
 </div>
 
 {:else}
-<!-- ══════════════════════════════════════════════════════════════════
-     READER
-     ══════════════════════════════════════════════════════════════════ -->
 <div class="app">
 
     <!-- Left Sidebar -->
@@ -740,7 +741,6 @@
 
         <div class="sidebar-divider"></div>
 
-        <!-- Annotation toggle — available from article one, no unlock needed -->
         <div class="annotation-toggle-row">
             <span class="sidebar-label" style="margin-bottom:0">Annotate terms</span>
             <button
@@ -826,7 +826,6 @@
                 <div class="para-num">{String(currentParagraph + 1).padStart(2, '0')} / {String(getParagraphs().length).padStart(2, '0')}</div>
 
                 <div class="para-card">
-                    <!-- Rewrite takes priority over annotations; otherwise show annotated HTML if available -->
                     {#if usingRewrite && interventionParagraph === currentParagraph}
                         <p class="para-text">{activeParagraphText}</p>
                     {:else if annotationMode && paragraphAnnotations[currentParagraph]?.length > 0}
@@ -854,7 +853,6 @@
                     </div>
                 </div>
 
-                <!-- ── Intervention panel — two-step ────────────────────────── -->
                 {#if isLoadingIntervention}
                     <div class="intervention-loading">
                         <span class="int-loading-text">AIRIA is analyzing this paragraph…</span>
@@ -871,7 +869,6 @@
                         </div>
 
                         {#if !showingRewrite}
-                            <!-- Step 1: Primer -->
                             <p class="int-step-label">Background context</p>
                             <p class="int-text">{interventionData.primer}</p>
                             {#if interventionData.annotation}
@@ -881,9 +878,7 @@
                                 <button class="int-btn-skip" onclick={dismissIntervention}>That helped, keep original</button>
                                 <button class="int-btn-use" onclick={revealRewrite}>I still need help →</button>
                             </div>
-
                         {:else}
-                            <!-- Step 2: Rewrite -->
                             <p class="int-step-label">
                                 {interventionData.rewrite_strength === 'aggressive' ? 'Full rewrite' : 'Simplified version'}
                             </p>
@@ -957,7 +952,6 @@
 
             <div class="sidebar-divider"></div>
 
-            <!-- Level 3 unlock tracker -->
             {#if !unlockStatus.level3_unlocked}
                 <p class="unlock-label">Level 3 unlock</p>
                 <div class="sample-bar-track">
