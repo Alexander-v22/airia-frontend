@@ -20,8 +20,11 @@
     }
 
     // ─── Persistent state ────────────────────────────────────────────────────
-    let trainingSamples = lsGet('airia_training_samples', []);
-    let articles        = lsGet('airia_articles', []);
+    let trainingSamples  = lsGet('airia_training_samples', []);
+    let articles         = lsGet('airia_articles', []);
+    let annotationLog    = lsGet('airia_annotation_log', []);
+    let interventionLog  = lsGet('airia_intervention_log', []);  // persisted across sessions
+    let unlockStatus     = lsGet('airia_unlock_status', { level3_unlocked: false, accepted_interventions: 0 });
 
     function getTrainingStats() {
         const counts = { too_hard: 0, just_right: 0, too_easy: 0 };
@@ -76,6 +79,36 @@
         return { avgWpm: Math.round(avgWpm), variance: Math.round(variance), totalTime: Math.round(totalTime) };
     }
 
+    // ─── Per-paragraph feature builder ───────────────────────────────────────
+    function getParagraphFeatures(paragraphIndex) {
+        const m = paragraphMetrics[paragraphIndex];
+        if (!m) return null;
+
+        const completedSoFar = paragraphMetrics.slice(0, paragraphIndex + 1).filter(Boolean);
+        const allWpms        = completedSoFar.map(p => p.wpm);
+        const avgWpm         = allWpms.reduce((a, b) => a + b, 0) / allWpms.length;
+
+        const variance = allWpms.length > 1
+            ? Math.sqrt(
+                allWpms.map(w => Math.pow(w - avgWpm, 2)).reduce((a, b) => a + b, 0) / allWpms.length
+              )
+            : 0;
+
+        const slowdownRatio = avgWpm > 0 ? Math.min(avgWpm / Math.max(m.wpm, 1), 3) : 1;
+
+        return {
+            avg_wpm:         Math.min(m.wpm / 500, 1),
+            wpm_variance:    Math.min(variance / 200, 1),
+            back_presses:    Math.min(backPresses / 10, 1),
+            completion_rate: getParagraphs().length > 0
+                                 ? (paragraphIndex + 1) / getParagraphs().length
+                                 : 0,
+            slowdown_ratio:  Math.min(slowdownRatio, 1),
+            blur_count:      Math.min(blurCount / 5, 1)
+        };
+    }
+
+    // ─── Session-wide normalized features (end-of-session /predict) ──────────
     function getNormalized() {
         const stats     = getSessionStats();
         const completed = paragraphMetrics.filter(m => m);
@@ -100,12 +133,21 @@
     let sessionMem3    = $state(null);
     let membraneCharge = $state(0);
 
-    // ─── Intervention state ──────────────────────────────────────────────────
-    let interventionText      = $state(null);
+    // ─── Intervention state — two-step flow ──────────────────────────────────
+    // Step 1: primer shown automatically when SNN spikes too_hard.
+    // Step 2: rewrite revealed only if user clicks "I still need help".
+    let interventionData      = $state(null);   // full /intervene response
     let interventionParagraph = $state(null);
     let isLoadingIntervention = $state(false);
-    let usingIntervention     = $state(false);
-    let interventionLog       = $state([]);
+    let showingRewrite        = $state(false);  // true after user requests rewrite
+    let usingRewrite          = $state(false);  // true after user accepts rewrite
+    let sessionInterventions  = $state([]);     // intervention events this session
+
+    // ─── Annotation state ────────────────────────────────────────────────────
+    // Independent of the SNN. User toggles it on; fires after each paragraph.
+    let annotationMode       = $state(false);
+    let paragraphAnnotations = $state({});      // { paragraphIndex: [AnnotationTerm] }
+    let isLoadingAnnotation  = $state(false);
 
     // ─── Pending article ─────────────────────────────────────────────────────
     let pendingArticleMetadata = $state(null);
@@ -156,23 +198,17 @@
 
     // ─── SNN per-paragraph inference ─────────────────────────────────────────
     async function runParagraphSNN(paragraphIndex) {
+        const features = getParagraphFeatures(paragraphIndex);
+        if (!features) {
+            console.log('SNN skipped — paragraph not long enough to record metrics');
+            return;
+        }
         try {
-            const weights  = lsGetRaw('airia_model_weights');
-            const features = getNormalized();
-            const payload  = {
-                features: {
-                    avg_wpm:         features.avg_wpm,
-                    wpm_variance:    features.wpm_variance,
-                    back_presses:    features.back_presses,
-                    completion_rate: features.completion_rate,
-                    slowdown_ratio:  features.slowdown_ratio,
-                    blur_count:      features.blur_count
-                },
-                mem1: sessionMem1,
-                mem2: sessionMem2,
-                mem3: sessionMem3
-            };
+            const weights = lsGetRaw('airia_model_weights');
+            const payload = { features, mem1: sessionMem1, mem2: sessionMem2, mem3: sessionMem3 };
             if (weights) payload.weights = weights;
+
+            console.log(`SNN para ${paragraphIndex} features:`, features);
 
             const res  = await fetch('https://web-production-a3b6.up.railway.app/predict-paragraph', {
                 method: 'POST',
@@ -180,50 +216,179 @@
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
+
+            console.log(`SNN para ${paragraphIndex} result:`, data);
+
             sessionMem1    = data.mem1;
             sessionMem2    = data.mem2;
             sessionMem3    = data.mem3;
             membraneCharge = data.membrane_charge;
+
             if (data.spiked && data.spike_class === 'too_hard') {
                 await fetchIntervention(paragraphIndex);
             }
-        } catch { console.log('SNN paragraph inference failed'); }
+        } catch (e) {
+            console.log('SNN paragraph inference failed', e);
+        }
     }
 
-    // ─── Intervention ─────────────────────────────────────────────────────────
+    // ─── Intervention ────────────────────────────────────────────────────────
     async function fetchIntervention(paragraphIndex) {
         isLoadingIntervention = true;
-        interventionText      = null;
+        interventionData      = null;
         interventionParagraph = paragraphIndex;
+        showingRewrite        = false;
+        usingRewrite          = false;
+
         try {
             const paragraphText   = getParagraphs()[paragraphIndex];
             const genreDifficulty = customText?.classification?.genre_difficulty ?? 0.5;
             const specificGenre   = customText?.classification?.specific_genre ?? 'general';
+
             const res  = await fetch('https://web-production-a3b6.up.railway.app/intervene', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ paragraph: paragraphText, genre_difficulty: genreDifficulty, specific_genre: specificGenre })
             });
             const data = await res.json();
-            interventionText = data.rewritten;
-            interventionLog  = [...interventionLog, { paragraphIndex, level: data.level, timestamp: new Date().toISOString() }];
-        } catch { console.log('Intervention fetch failed'); }
+            interventionData = data;
+
+            // Log the event — primer shown, rewrite not yet requested
+            const event = {
+                article_id:       pendingArticleMetadata?.id ?? 'unknown',
+                paragraph_index:  paragraphIndex,
+                level:            data.level,
+                rewrite_strength: data.rewrite_strength,
+                genre_difficulty: genreDifficulty,
+                primer_only:      true,
+                rewrite_used:     false,
+                timestamp:        new Date().toISOString()
+            };
+            sessionInterventions = [...sessionInterventions, event];
+
+        } catch (e) {
+            console.log('Intervention fetch failed', e);
+        }
         isLoadingIntervention = false;
     }
 
-    function dismissIntervention() { interventionText = null; interventionParagraph = null; usingIntervention = false; }
-    function useIntervention()     { usingIntervention = true; }
+    function revealRewrite() {
+        showingRewrite = true;
+        // Update last session event: user needed more than primer
+        sessionInterventions = sessionInterventions.map((e, i) =>
+            i === sessionInterventions.length - 1 ? { ...e, primer_only: false } : e
+        );
+    }
+
+    function useRewrite() {
+        usingRewrite = true;
+        // Update last session event: user accepted the rewrite
+        sessionInterventions = sessionInterventions.map((e, i) =>
+            i === sessionInterventions.length - 1 ? { ...e, rewrite_used: true } : e
+        );
+        // Increment accepted_interventions for Level 3 unlock tracking
+        const newCount = unlockStatus.accepted_interventions + 1;
+        unlockStatus = {
+            accepted_interventions: newCount,
+            level3_unlocked:        newCount >= 3
+        };
+        lsSet('airia_unlock_status', unlockStatus);
+    }
+
+    function dismissIntervention() {
+        interventionData      = null;
+        interventionParagraph = null;
+        showingRewrite        = false;
+        usingRewrite          = false;
+    }
+
+    // ─── Annotation ──────────────────────────────────────────────────────────
+    async function fetchAnnotations(paragraphIndex) {
+        if (!annotationMode) return;
+        if (paragraphAnnotations[paragraphIndex] !== undefined) return; // already fetched
+
+        isLoadingAnnotation = true;
+        try {
+            const paragraphText = getParagraphs()[paragraphIndex];
+            const res = await fetch('https://web-production-a3b6.up.railway.app/annotate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    paragraph:        paragraphText,
+                    specific_genre:   customText?.classification?.specific_genre ?? 'general',
+                    genre_difficulty: customText?.classification?.genre_difficulty ?? 0.5
+                })
+            });
+            const data = await res.json();
+            paragraphAnnotations = { ...paragraphAnnotations, [paragraphIndex]: data.terms ?? [] };
+
+            // Persist annotation event if any terms were found
+            if (data.terms?.length > 0) {
+                const event = {
+                    article_id:       pendingArticleMetadata?.id ?? 'unknown',
+                    paragraph_index:  paragraphIndex,
+                    genre:            customText?.classification?.specific_genre ?? 'general',
+                    genre_difficulty: customText?.classification?.genre_difficulty ?? 0.5,
+                    terms:            data.terms.map(t => t.term),
+                    timestamp:        new Date().toISOString()
+                };
+                annotationLog = [...annotationLog, event];
+                lsSet('airia_annotation_log', annotationLog);
+            }
+        } catch (e) {
+            console.log('Annotation fetch failed', e);
+            paragraphAnnotations = { ...paragraphAnnotations, [paragraphIndex]: [] };
+        }
+        isLoadingAnnotation = false;
+    }
+
+    // Builds paragraph HTML with annotated terms wrapped in tooltip spans.
+    function buildAnnotatedHTML(paragraphIndex) {
+        const text  = getParagraphs()[paragraphIndex] ?? '';
+        const terms = paragraphAnnotations[paragraphIndex];
+        if (!terms || terms.length === 0) return escapeHtml(text);
+
+        // Sort descending by start offset so splicing doesn't shift later indices
+        const sorted = [...terms].sort((a, b) => b.start - a.start);
+        let result = text;
+        for (const t of sorted) {
+            const before = result.slice(0, t.start);
+            const term   = result.slice(t.start, t.end);
+            const after  = result.slice(t.end);
+            result =
+                escapeHtml(before) +
+                `<span class="annotated-term" title="${escapeHtml(t.definition)}">${escapeHtml(term)}<span class="annot-tooltip">${escapeHtml(t.definition)}</span></span>` +
+                escapeHtml(after);
+        }
+        return result;
+    }
+
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
 
     // ─── Navigation ──────────────────────────────────────────────────────────
     async function nextParagraph() {
         recordParagraphMetrics();
         dismissIntervention();
+
+        const idx = currentParagraph;
+
         if (currentParagraph < getParagraphs().length - 1) {
-            await runParagraphSNN(currentParagraph);
+            // Run SNN and annotation in parallel — neither blocks the other
+            await Promise.all([runParagraphSNN(idx), fetchAnnotations(idx)]);
             currentParagraph++;
             startTimer();
         } else {
+            await Promise.all([runParagraphSNN(idx), fetchAnnotations(idx)]);
             stopTimer();
+            // Persist session intervention log to localStorage
+            interventionLog = [...interventionLog, ...sessionInterventions];
+            lsSet('airia_intervention_log', interventionLog);
             sessionComplete = true;
         }
     }
@@ -334,10 +499,12 @@
         sessionMem2           = null;
         sessionMem3           = null;
         membraneCharge        = 0;
-        interventionText      = null;
+        interventionData      = null;
         interventionParagraph = null;
-        usingIntervention     = false;
-        interventionLog       = [];
+        showingRewrite        = false;
+        usingRewrite          = false;
+        sessionInterventions  = [];
+        paragraphAnnotations  = {};
         startTimer();
     }
 
@@ -433,64 +600,57 @@
 
         const THRESHOLD = 180;
 
-        function draw(t) {
+        function draw() {
             ctx.clearRect(0, 0, W, H);
-
             for (const n of nodes) {
-                n.x += n.vx;
-                n.y += n.vy;
+                n.x += n.vx; n.y += n.vy;
                 if (n.x < 0 || n.x > W) n.vx *= -1;
                 if (n.y < 0 || n.y > H) n.vy *= -1;
                 n.pulse += n.pulseSpeed;
             }
-
             for (let i = 0; i < nodes.length; i++) {
                 for (let j = i + 1; j < nodes.length; j++) {
-                    const a  = nodes[i];
-                    const b  = nodes[j];
-                    const dx = a.x - b.x;
-                    const dy = a.y - b.y;
+                    const a = nodes[i], b = nodes[j];
+                    const dx = a.x - b.x, dy = a.y - b.y;
                     const d  = Math.sqrt(dx * dx + dy * dy);
                     if (d < THRESHOLD) {
                         const flicker = (Math.sin(a.pulse) + Math.sin(b.pulse)) * 0.25 + 0.5;
-                        const alpha   = (1 - d / THRESHOLD) * 0.09 * flicker;
-                        ctx.strokeStyle = `rgba(0,0,0,${alpha})`;
+                        ctx.strokeStyle = `rgba(0,0,0,${(1 - d / THRESHOLD) * 0.09 * flicker})`;
                         ctx.lineWidth   = 0.7;
-                        ctx.beginPath();
-                        ctx.moveTo(a.x, a.y);
-                        ctx.lineTo(b.x, b.y);
-                        ctx.stroke();
+                        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
                     }
                 }
             }
-
             for (const n of nodes) {
-                const glow  = (Math.sin(n.pulse) * 0.5 + 0.5);
-                const alpha = 0.12 + glow * 0.22;
-                const r     = n.r + glow * 1.2;
+                const glow = Math.sin(n.pulse) * 0.5 + 0.5;
                 ctx.beginPath();
-                ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+                ctx.arc(n.x, n.y, n.r + glow * 1.2, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(0,0,0,${0.12 + glow * 0.22})`;
                 ctx.fill();
             }
-
             animFrame = requestAnimationFrame(draw);
         }
-
         animFrame = requestAnimationFrame(draw);
     }
 
     // ─── Derived ─────────────────────────────────────────────────────────────
-    let membranePercent     = $derived(Math.round(membraneCharge * 100));
+    let membranePercent = $derived(Math.round(membraneCharge * 100));
+
     let activeParagraphText = $derived(
-        usingIntervention && interventionParagraph === currentParagraph
-            ? interventionText
+        usingRewrite && interventionParagraph === currentParagraph
+            ? (interventionData?.rewritten ?? getParagraphs()[currentParagraph])
             : getParagraphs()[currentParagraph]
+    );
+
+    let showIntervention = $derived(
+        interventionData !== null &&
+        interventionParagraph === currentParagraph &&
+        !usingRewrite
     );
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════════
-     TOP NAV — always visible
+     TOP NAV
      ══════════════════════════════════════════════════════════════════ -->
 <nav class="topnav">
     <span class="topnav-logo">AIRIA</span>
@@ -502,16 +662,13 @@
 
 {#if !customText}
 <!-- ══════════════════════════════════════════════════════════════════
-     HERO — shown when no article is loaded
+     HERO
      ══════════════════════════════════════════════════════════════════ -->
 <div class="hero">
     <canvas bind:this={canvas} class="hero-canvas"></canvas>
-
     <div class="hero-content">
         <h1 class="hero-logo">AIRIA</h1>
         <p class="hero-tagline">Adaptive reading, powered by a spiking neural network.</p>
-
-        <!-- URL loader -->
         <div class="hero-url-row">
             <input
                 type="text"
@@ -525,11 +682,7 @@
                 {isLoadingUrl ? '…' : '→'}
             </button>
         </div>
-        {#if urlError}
-            <p class="hero-url-error">{urlError}</p>
-        {/if}
-
-        <!-- Steps -->
+        {#if urlError}<p class="hero-url-error">{urlError}</p>{/if}
         <div class="hero-steps">
             <div class="hero-step">
                 <span class="hero-step-num">01</span>
@@ -552,14 +705,13 @@
                 <span class="hero-step-desc">After 10 sessions, AIRIA retrains on your data. By article 7, interventions fire silently — only when you actually need them.</span>
             </div>
         </div>
-
         <a href="/infopage" class="hero-learn">Deep dive into how it works →</a>
     </div>
 </div>
 
 {:else}
 <!-- ══════════════════════════════════════════════════════════════════
-     READER — shown when article is loaded
+     READER
      ══════════════════════════════════════════════════════════════════ -->
 <div class="app">
 
@@ -569,16 +721,8 @@
         <div class="url-input-section">
             <div class="sidebar-label">Load article</div>
             <div class="url-row">
-                <input
-                    type="text"
-                    placeholder="Paste URL..."
-                    bind:value={urlInput}
-                    class="url-input"
-                    disabled={isLoadingUrl}
-                />
-                <button class="url-btn" onclick={loadArticleFromUrl} disabled={isLoadingUrl}>
-                    {isLoadingUrl ? '…' : '↓'}
-                </button>
+                <input type="text" placeholder="Paste URL..." bind:value={urlInput} class="url-input" disabled={isLoadingUrl} />
+                <button class="url-btn" onclick={loadArticleFromUrl} disabled={isLoadingUrl}>{isLoadingUrl ? '…' : '↓'}</button>
             </div>
             {#if urlError}<div class="url-error">{urlError}</div>{/if}
             <div class="article-loaded">
@@ -590,9 +734,25 @@
         <div class="sidebar-divider"></div>
 
         <div class="mode-row">
-            <button class="mode-btn" class:active={mode === "focused"} onclick={() => mode !== "focused" && toggleMode()}>Paragraph</button>
+            <button class="mode-btn" class:active={mode === "focused"}  onclick={() => mode !== "focused"  && toggleMode()}>Paragraph</button>
             <button class="mode-btn" class:active={mode === "fulltext"} onclick={() => mode !== "fulltext" && toggleMode()}>Full text</button>
         </div>
+
+        <div class="sidebar-divider"></div>
+
+        <!-- Annotation toggle — available from article one, no unlock needed -->
+        <div class="annotation-toggle-row">
+            <span class="sidebar-label" style="margin-bottom:0">Annotate terms</span>
+            <button
+                class="annotation-toggle"
+                class:on={annotationMode}
+                onclick={() => annotationMode = !annotationMode}
+                title="Highlights domain-specific terms after each paragraph"
+            >{annotationMode ? 'On' : 'Off'}</button>
+        </div>
+        {#if annotationMode}
+            <p class="annotation-hint">Terms highlighted after each paragraph.</p>
+        {/if}
 
         <div class="sidebar-divider"></div>
 
@@ -638,7 +798,8 @@
                     class="progress-seg"
                     class:done={paragraphMetrics[i]}
                     class:curr={i === currentParagraph && !sessionComplete}
-                    class:intervention={interventionLog.some(l => l.paragraphIndex === i)}
+                    class:intervention={sessionInterventions.some(e => e.paragraph_index === i)}
+                    class:annotated={paragraphAnnotations[i]?.length > 0}
                     onclick={() => jumpToParagraph(i)}
                     title={paragraphMetrics[i] ? `${paragraphMetrics[i].wpm} WPM` : 'Not read'}
                 ></div>
@@ -665,7 +826,15 @@
                 <div class="para-num">{String(currentParagraph + 1).padStart(2, '0')} / {String(getParagraphs().length).padStart(2, '0')}</div>
 
                 <div class="para-card">
-                    <p class="para-text">{activeParagraphText}</p>
+                    <!-- Rewrite takes priority over annotations; otherwise show annotated HTML if available -->
+                    {#if usingRewrite && interventionParagraph === currentParagraph}
+                        <p class="para-text">{activeParagraphText}</p>
+                    {:else if annotationMode && paragraphAnnotations[currentParagraph]?.length > 0}
+                        <p class="para-text">{@html buildAnnotatedHTML(currentParagraph)}</p>
+                    {:else}
+                        <p class="para-text">{activeParagraphText}</p>
+                    {/if}
+
                     <div class="para-footer">
                         <div class="wpm-display">
                             {#if paragraphMetrics[currentParagraph]}
@@ -676,30 +845,54 @@
                                 <span class="wpm-label">WPM live</span>
                             {/if}
                         </div>
-                        {#if usingIntervention && interventionParagraph === currentParagraph}
-                            <span class="using-badge">using simplified</span>
+                        {#if usingRewrite && interventionParagraph === currentParagraph}
+                            <span class="using-badge">using rewrite</span>
+                        {/if}
+                        {#if isLoadingAnnotation}
+                            <span class="annot-loading">annotating…</span>
                         {/if}
                     </div>
                 </div>
 
+                <!-- ── Intervention panel — two-step ────────────────────────── -->
                 {#if isLoadingIntervention}
                     <div class="intervention-loading">
                         <span class="int-loading-text">AIRIA is analyzing this paragraph…</span>
                     </div>
                 {/if}
 
-                {#if interventionText && interventionParagraph === currentParagraph && !usingIntervention}
-                    <div class="intervention-panel">
+                {#if showIntervention}
+                    <div class="intervention-panel" class:level3={interventionData.level === 3}>
                         <div class="int-header">
-                            <span class="int-badge">AIRIA suggestion</span>
+                            <span class="int-badge">
+                                {interventionData.level === 3 ? 'AIRIA · Level 3' : 'AIRIA · Level 2'}
+                            </span>
                             <button class="int-dismiss" onclick={dismissIntervention}>dismiss ×</button>
                         </div>
-                        <p class="int-label">Simplified version of this paragraph</p>
-                        <p class="int-text">{interventionText}</p>
-                        <div class="int-actions">
-                            <button class="int-btn-use" onclick={useIntervention}>Use this version</button>
-                            <button class="int-btn-skip" onclick={dismissIntervention}>Keep original</button>
-                        </div>
+
+                        {#if !showingRewrite}
+                            <!-- Step 1: Primer -->
+                            <p class="int-step-label">Background context</p>
+                            <p class="int-text">{interventionData.primer}</p>
+                            {#if interventionData.annotation}
+                                <p class="int-annotation">{interventionData.annotation}</p>
+                            {/if}
+                            <div class="int-actions">
+                                <button class="int-btn-skip" onclick={dismissIntervention}>That helped, keep original</button>
+                                <button class="int-btn-use" onclick={revealRewrite}>I still need help →</button>
+                            </div>
+
+                        {:else}
+                            <!-- Step 2: Rewrite -->
+                            <p class="int-step-label">
+                                {interventionData.rewrite_strength === 'aggressive' ? 'Full rewrite' : 'Simplified version'}
+                            </p>
+                            <p class="int-text">{interventionData.rewritten}</p>
+                            <div class="int-actions">
+                                <button class="int-btn-use" onclick={useRewrite}>Use this version</button>
+                                <button class="int-btn-skip" onclick={dismissIntervention}>Keep original</button>
+                            </div>
+                        {/if}
                     </div>
                 {/if}
 
@@ -746,8 +939,10 @@
                 <div class="final-row"><span class="final-key">Avg WPM</span><span class="final-val">{getSessionStats().avgWpm || 0}</span></div>
                 <div class="final-row"><span class="final-key">Total time</span><span class="final-val">{formatTime(getSessionStats().totalTime)}</span></div>
                 <div class="final-row"><span class="final-key">Back presses</span><span class="final-val">{backPresses}</span></div>
-                {#if interventionLog.length > 0}
-                    <div class="final-row"><span class="final-key">Interventions</span><span class="final-val">{interventionLog.length}</span></div>
+                {#if sessionInterventions.length > 0}
+                    <div class="final-row"><span class="final-key">Interventions</span><span class="final-val">{sessionInterventions.length}</span></div>
+                    <div class="final-row"><span class="final-key">Primer only</span><span class="final-val">{sessionInterventions.filter(e => e.primer_only).length}</span></div>
+                    <div class="final-row"><span class="final-key">Rewrite used</span><span class="final-val">{sessionInterventions.filter(e => e.rewrite_used).length}</span></div>
                 {/if}
             </div>
 
@@ -758,6 +953,19 @@
                     <span class="prediction-label">Prediction</span>
                     <span class="prediction-val">{prediction.replace('_', ' ')}</span>
                 </div>
+            {/if}
+
+            <div class="sidebar-divider"></div>
+
+            <!-- Level 3 unlock tracker -->
+            {#if !unlockStatus.level3_unlocked}
+                <p class="unlock-label">Level 3 unlock</p>
+                <div class="sample-bar-track">
+                    <div class="sample-bar-fill" style="width: {Math.min((unlockStatus.accepted_interventions / 3) * 100, 100)}%"></div>
+                </div>
+                <p class="samples-needed">{Math.max(0, 3 - unlockStatus.accepted_interventions)} rewrite(s) to unlock</p>
+            {:else}
+                <div class="ready-badge">Level 3 unlocked</div>
             {/if}
 
             <div class="sidebar-divider"></div>

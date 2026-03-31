@@ -1,9 +1,12 @@
 <script>
   import { onMount } from 'svelte';
 
-  let stats    = null;
-  let articles = [];
-  let loading  = true;
+  let stats           = null;
+  let articles        = [];
+  let annotationLog   = [];
+  let interventionLog = [];
+  let unlockStatus    = { level3_unlocked: false, accepted_interventions: 0 };
+  let loading         = true;
 
   function lsGet(key, fallback) {
     try {
@@ -13,8 +16,11 @@
   }
 
   onMount(() => {
-    const samples = lsGet('airia_training_samples', []);
-    articles      = lsGet('airia_articles', []);
+    const samples   = lsGet('airia_training_samples', []);
+    articles        = lsGet('airia_articles', []);
+    annotationLog   = lsGet('airia_annotation_log', []);
+    interventionLog = lsGet('airia_intervention_log', []);
+    unlockStatus    = lsGet('airia_unlock_status', { level3_unlocked: false, accepted_interventions: 0 });
 
     const counts = { too_hard: 0, just_right: 0, too_easy: 0 };
     const labels = { 0: 'too_hard', 1: 'just_right', 2: 'too_easy' };
@@ -63,6 +69,67 @@
     return { avgWpm, daysDiff };
   }
 
+  // ─── Annotation stats ────────────────────────────────────────────────────
+  // Term frequency across all annotation events
+  function getTopTerms(log, n = 8) {
+    const freq = {};
+    for (const event of log) {
+      for (const term of (event.terms ?? [])) {
+        freq[term] = (freq[term] ?? 0) + 1;
+      }
+    }
+    return Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, n)
+      .map(([term, count]) => ({ term, count }));
+  }
+
+  // Annotation density by genre: avg terms per paragraph per genre
+  function getAnnotationByGenre(log) {
+    const byGenre = {};
+    for (const event of log) {
+      const g = event.genre ?? 'unknown';
+      if (!byGenre[g]) byGenre[g] = { total: 0, events: 0 };
+      byGenre[g].total  += event.terms?.length ?? 0;
+      byGenre[g].events += 1;
+    }
+    return Object.entries(byGenre)
+      .map(([genre, d]) => ({ genre, avg: parseFloat((d.total / d.events).toFixed(1)), events: d.events }))
+      .sort((a, b) => b.avg - a.avg)
+      .slice(0, 6);
+  }
+
+  // ─── Intervention stats ───────────────────────────────────────────────────
+  function getInterventionStats(log) {
+    if (!log.length) return null;
+    const total      = log.length;
+    const primerOnly = log.filter(e => e.primer_only).length;
+    const rewrites   = log.filter(e => e.rewrite_used).length;
+    const level2     = log.filter(e => e.level === 2).length;
+    const level3     = log.filter(e => e.level === 3).length;
+    return { total, primerOnly, rewrites, level2, level3 };
+  }
+
+  // Intervention rate by genre: how often interventions fire per article genre
+  function getInterventionByGenre(intLog, articleList) {
+    // Build a map of article_id -> genre from the articles list
+    const idToGenre = {};
+    for (const a of articleList) {
+      idToGenre[a.id] = a.classification?.specific_genre ?? 'unknown';
+    }
+    const byGenre = {};
+    for (const event of intLog) {
+      const g = idToGenre[event.article_id] ?? event.genre ?? 'unknown';
+      if (!byGenre[g]) byGenre[g] = { interventions: 0, rewrites: 0 };
+      byGenre[g].interventions += 1;
+      if (event.rewrite_used) byGenre[g].rewrites += 1;
+    }
+    return Object.entries(byGenre)
+      .map(([genre, d]) => ({ genre, ...d, rewriteRate: Math.round((d.rewrites / d.interventions) * 100) }))
+      .sort((a, b) => b.interventions - a.interventions)
+      .slice(0, 6);
+  }
+
   $: arcTotal     = 7;
   $: articleCount = articles.length;
   $: arcLabel     = articleCount >= arcTotal ? 'Fully personalized' : `Article ${articleCount} of ${arcTotal}`;
@@ -77,9 +144,13 @@
   $: goodPct = Math.round(((stats?.samples_by_class.just_right ?? 0) / total) * 100);
   $: easyPct = Math.round(((stats?.samples_by_class.too_easy   ?? 0) / total) * 100);
 
-  $: allSamples   = lsGet('airia_training_samples', []);
-  $: insights     = getInsights(allSamples);
-  $: uniqueGenres = [...new Set(articles.map(a => a.classification?.broad_genre).filter(Boolean))];
+  $: allSamples        = lsGet('airia_training_samples', []);
+  $: insights          = getInsights(allSamples);
+  $: uniqueGenres      = [...new Set(articles.map(a => a.classification?.broad_genre).filter(Boolean))];
+  $: topTerms          = getTopTerms(annotationLog);
+  $: annotationGenres  = getAnnotationByGenre(annotationLog);
+  $: interventionStats = getInterventionStats(interventionLog);
+  $: interventionGenres = getInterventionByGenre(interventionLog, articles);
 </script>
 
 <nav class="topnav">
@@ -121,6 +192,7 @@
         </div>
       </div>
 
+      <!-- ── Top stats strip ──────────────────────────────────────────────── -->
       <div class="stats-strip">
         <div class="strip-stat">
           <div class="strip-val">{stats.total_samples}</div>
@@ -146,8 +218,19 @@
           <div class="strip-label">Active</div>
           <div class="strip-sub">days since first session</div>
         </div>
+        <div class="strip-stat">
+          <div class="strip-val">{interventionStats?.total ?? 0}</div>
+          <div class="strip-label">Interventions</div>
+          <div class="strip-sub">{interventionStats?.rewrites ?? 0} rewrites used</div>
+        </div>
+        <div class="strip-stat">
+          <div class="strip-val">{annotationLog.length}</div>
+          <div class="strip-label">Annotated</div>
+          <div class="strip-sub">paragraphs with terms</div>
+        </div>
       </div>
 
+      <!-- ── Training balance + AIRIA observed ───────────────────────────── -->
       <div class="stats-mid-row">
 
         <div class="stats-card">
@@ -199,6 +282,20 @@
               {#if articleCount >= 2}
                 <div class="obs-item">You have covered <strong>{uniqueGenres.length} genre{uniqueGenres.length !== 1 ? 's' : ''}</strong> — reading more genres improves personalization accuracy.</div>
               {/if}
+              {#if interventionStats && interventionStats.total > 0}
+                <div class="obs-item">
+                  The primer alone resolved
+                  <strong>{interventionStats.primerOnly} of {interventionStats.total}</strong>
+                  intervention{interventionStats.total !== 1 ? 's' : ''} — you needed a rewrite
+                  {interventionStats.rewrites} time{interventionStats.rewrites !== 1 ? 's' : ''}.
+                </div>
+              {/if}
+              {#if topTerms.length > 0}
+                <div class="obs-item">
+                  Your most annotated term is <strong>{topTerms[0].term}</strong>,
+                  flagged {topTerms[0].count} time{topTerms[0].count !== 1 ? 's' : ''} across your sessions.
+                </div>
+              {/if}
             </div>
           {:else}
             <div class="card-empty">Read at least 3 articles for AIRIA to start building your reading profile.</div>
@@ -207,6 +304,116 @@
 
       </div>
 
+      <!-- ── Intervention breakdown ─────────────────────────────────────── -->
+      {#if interventionStats && interventionStats.total > 0}
+        <div class="stats-mid-row">
+
+          <div class="stats-card">
+            <div class="card-title">Intervention breakdown</div>
+            <div class="balance-rows">
+              <div class="balance-row">
+                <span class="bal-key">Total fired</span>
+                <span class="bal-val">{interventionStats.total}</span>
+              </div>
+              <div class="balance-row">
+                <span class="bal-key">Primer resolved</span>
+                <span class="bal-val">{interventionStats.primerOnly}</span>
+              </div>
+              <div class="balance-row">
+                <span class="bal-key">Needed rewrite</span>
+                <span class="bal-val">{interventionStats.total - interventionStats.primerOnly}</span>
+              </div>
+              <div class="balance-row">
+                <span class="bal-key">Rewrite accepted</span>
+                <span class="bal-val">{interventionStats.rewrites}</span>
+              </div>
+              <div class="balance-row">
+                <span class="bal-key">Level 2 fired</span>
+                <span class="bal-val">{interventionStats.level2}</span>
+              </div>
+              <div class="balance-row">
+                <span class="bal-key">Level 3 fired</span>
+                <span class="bal-val">{interventionStats.level3}</span>
+              </div>
+            </div>
+
+            <!-- Level 3 unlock progress -->
+            <div class="sidebar-divider" style="margin: 12px 0"></div>
+            {#if unlockStatus.level3_unlocked}
+              <div class="balance-ready">Level 3 unlocked</div>
+            {:else}
+              <div class="balance-note">
+                Level 3 unlock: {unlockStatus.accepted_interventions} / 3 rewrites accepted
+              </div>
+              <div class="balance-bar" style="margin-top: 6px">
+                <div class="bb-good" style="width: {Math.min((unlockStatus.accepted_interventions / 3) * 100, 100)}%"></div>
+              </div>
+            {/if}
+          </div>
+
+          <div class="stats-card">
+            <div class="card-title">Interventions by genre</div>
+            {#if interventionGenres.length > 0}
+              <div class="genre-list">
+                {#each interventionGenres as g}
+                  <div class="genre-row">
+                    <span class="genre-name">{g.genre}</span>
+                    <span class="genre-count">{g.interventions} fired</span>
+                    <span class="genre-rewrite">{g.rewriteRate}% rewritten</span>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <div class="card-empty">No intervention data yet.</div>
+            {/if}
+          </div>
+
+        </div>
+      {/if}
+
+      <!-- ── Annotation breakdown ───────────────────────────────────────── -->
+      {#if annotationLog.length > 0}
+        <div class="stats-mid-row">
+
+          <div class="stats-card">
+            <div class="card-title">Top annotated terms</div>
+            <div class="obs-list">
+              {#each topTerms as t}
+                <div class="obs-item term-row">
+                  <span class="term-name">{t.term}</span>
+                  <span class="term-count">{t.count}×</span>
+                </div>
+              {/each}
+              {#if topTerms.length === 0}
+                <div class="card-empty">No annotations yet. Turn on Annotate terms in the sidebar while reading.</div>
+              {/if}
+            </div>
+          </div>
+
+          <div class="stats-card">
+            <div class="card-title">Annotation density by genre</div>
+            <p class="card-sub">Avg domain terms flagged per paragraph</p>
+            {#if annotationGenres.length > 0}
+              <div class="genre-list">
+                {#each annotationGenres as g}
+                  <div class="genre-row">
+                    <span class="genre-name">{g.genre}</span>
+                    <span class="genre-count">{g.avg} terms/para</span>
+                    <div class="diff-bar" style="width: 80px; display: inline-block; vertical-align: middle; margin-left: 8px">
+                      <div class="diff-fill" style="width: {Math.min(g.avg / 6 * 100, 100)}%"></div>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <div class="card-empty">No annotation data yet.</div>
+            {/if}
+          </div>
+
+        </div>
+      {/if}
+
+      <!-- ── Articles table ─────────────────────────────────────────────── -->
       <div class="table-section">
         <div class="table-header-row">
           <span class="table-title">Ingested articles</span>
@@ -225,11 +432,13 @@
                   <th>Lexile</th>
                   <th>Difficulty</th>
                   <th>Words</th>
+                  <th>Interventions</th>
                   <th>Date</th>
                 </tr>
               </thead>
               <tbody>
                 {#each articles as article}
+                  {@const articleInterventions = interventionLog.filter(e => e.article_id === article.id)}
                   <tr>
                     <td class="td-title">
                       <a href={article.url} target="_blank" rel="noreferrer" class="article-link">
@@ -247,6 +456,14 @@
                       </div>
                     </td>
                     <td class="td-mono">{article.word_count.toLocaleString()}</td>
+                    <td class="td-mono">
+                      {#if articleInterventions.length > 0}
+                        {articleInterventions.length}
+                        <span class="int-sub">({articleInterventions.filter(e => e.rewrite_used).length} rewritten)</span>
+                      {:else}
+                        —
+                      {/if}
+                    </td>
                     <td class="td-date">{formatDate(article.timestamp)}</td>
                   </tr>
                 {/each}
