@@ -242,6 +242,7 @@
             const chargeSpike =
                 data.membrane_charge > 0.68 &&
                 features.slowdown_ratio > 0.75 &&
+                data.spike_class === 'too_hard' &&
                 interventionData === null;
 
             if (binarySpike || chargeSpike) {
