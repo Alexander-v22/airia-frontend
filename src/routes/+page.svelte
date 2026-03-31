@@ -144,6 +144,8 @@
     let sessionInterventions  = $state([]);
 
     // ─── Annotation state ────────────────────────────────────────────────────
+    // Annotations are pre-fetched when the user hits Start on a paragraph,
+    // so they are ready to display immediately when they move to the next one.
     let annotationMode       = $state(false);
     let paragraphAnnotations = $state({});
     let isLoadingAnnotation  = $state(false);
@@ -177,6 +179,10 @@
         timerInterval = setInterval(() => {
             elapsedTime = (Date.now() - paragraphStartTime) / 1000;
         }, 100);
+
+        // Pre-fetch annotations for the current paragraph in the background
+        // so they are ready by the time the user finishes reading and moves on.
+        fetchAnnotations(currentParagraph);
     }
 
     function pauseReading() { reading = false; clearInterval(timerInterval); }
@@ -196,12 +202,14 @@
     }
 
     // ─── SNN per-paragraph inference ─────────────────────────────────────────
-    // Trigger logic — two paths to intervention:
-    //   1. Binary spike: SNN fires too_hard (clean signal, preferred)
-    //   2. Membrane charge: charge > 0.62 AND slowdown_ratio > 0.75
-    //      (catches fast readers whose absolute WPM looks comfortable
-    //       but whose per-paragraph slowdown is a clear struggle signal)
-    // Path 2 only fires if no intervention is already active for this paragraph.
+    // Two trigger paths:
+    //   Path 1 — Binary spike: SNN fires too_hard directly (clean signal).
+    //   Path 2 — Charge spike: membrane_charge > 0.55 AND slowdown_ratio > 0.65.
+    //     slowdown > 0.65 means this paragraph was >35% slower than running avg.
+    //     charge > 0.55 means struggle has been accumulating across prior paragraphs.
+    //     Thresholds are intentionally lower than Path 1 to catch fast readers
+    //     whose absolute WPM looks comfortable but whose dip is a real signal.
+    //     Only fires if no intervention is already active.
     async function runParagraphSNN(paragraphIndex) {
         const features = getParagraphFeatures(paragraphIndex);
         if (!features) {
@@ -229,18 +237,12 @@
             sessionMem3    = data.mem3;
             membraneCharge = data.membrane_charge;
 
-            // Path 1: clean binary spike
             const binarySpike = data.spiked && data.spike_class === 'too_hard';
 
-            // Path 2: membrane charge buildup + meaningful slowdown on this paragraph.
-            // slowdown_ratio > 0.75 means this paragraph was at least 25% slower
-            // than the running average — a real dip, not noise.
-            // membrane_charge > 0.62 means the network has been accumulating
-            // struggle signal across prior paragraphs.
             const chargeSpike =
-                data.membrane_charge > 0.62 &&
-                features.slowdown_ratio > 0.75 &&
-                interventionData === null;  // don't double-fire
+                data.membrane_charge > 0.55 &&
+                features.slowdown_ratio > 0.65 &&
+                interventionData === null;
 
             if (binarySpike || chargeSpike) {
                 console.log(`Intervention triggered — binary: ${binarySpike}, charge: ${chargeSpike}, membrane: ${data.membrane_charge.toFixed(2)}, slowdown: ${features.slowdown_ratio.toFixed(2)}`);
@@ -315,6 +317,8 @@
     }
 
     // ─── Annotation ──────────────────────────────────────────────────────────
+    // Called from beginReading() so fetching happens while the user reads,
+    // not after they hit Next. Results are ready immediately on navigation.
     async function fetchAnnotations(paragraphIndex) {
         if (!annotationMode) return;
         if (paragraphAnnotations[paragraphIndex] !== undefined) return;
@@ -388,11 +392,15 @@
         const idx = currentParagraph;
 
         if (currentParagraph < getParagraphs().length - 1) {
-            await Promise.all([runParagraphSNN(idx), fetchAnnotations(idx)]);
+            // SNN runs on the paragraph just completed.
+            // Annotation was already pre-fetched when user hit Start,
+            // so we only await SNN here. Annotation for the next paragraph
+            // will fire when the user hits Start on it.
+            await runParagraphSNN(idx);
             currentParagraph++;
             startTimer();
         } else {
-            await Promise.all([runParagraphSNN(idx), fetchAnnotations(idx)]);
+            await runParagraphSNN(idx);
             stopTimer();
             interventionLog = [...interventionLog, ...sessionInterventions];
             lsSet('airia_intervention_log', interventionLog);
@@ -747,11 +755,11 @@
                 class="annotation-toggle"
                 class:on={annotationMode}
                 onclick={() => annotationMode = !annotationMode}
-                title="Highlights domain-specific terms after each paragraph"
+                title="Highlights domain-specific terms while you read"
             >{annotationMode ? 'On' : 'Off'}</button>
         </div>
         {#if annotationMode}
-            <p class="annotation-hint">Terms highlighted after each paragraph.</p>
+            <p class="annotation-hint">Terms fetched when you hit Start.</p>
         {/if}
 
         <div class="sidebar-divider"></div>
