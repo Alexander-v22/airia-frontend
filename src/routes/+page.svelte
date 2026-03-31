@@ -204,7 +204,7 @@
     // ─── SNN per-paragraph inference ─────────────────────────────────────────
     // Two trigger paths:
     //   Path 1 — Binary spike: SNN fires too_hard directly (clean signal).
-    //   Path 2 — Charge spike: membrane_charge > 0.55 AND slowdown_ratio > 0.65.
+    //   Path 2 — Charge spike: membrane_charge > 0.68 AND slowdown_ratio > 0.75.
     //     slowdown > 0.65 means this paragraph was >35% slower than running avg.
     //     charge > 0.55 means struggle has been accumulating across prior paragraphs.
     //     Thresholds are intentionally lower than Path 1 to catch fast readers
@@ -240,8 +240,8 @@
             const binarySpike = data.spiked && data.spike_class === 'too_hard';
 
             const chargeSpike =
-                data.membrane_charge > 0.55 &&
-                features.slowdown_ratio > 0.65 &&
+                data.membrane_charge > 0.68 &&
+                features.slowdown_ratio > 0.75 &&
                 interventionData === null;
 
             if (binarySpike || chargeSpike) {
