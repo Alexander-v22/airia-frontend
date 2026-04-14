@@ -6,6 +6,7 @@
   <a href="/" class="topnav-logo">AIRIA</a>
   <div class="topnav-links">
     <a href="/stats"    class="topnav-link">Your data</a>
+    <a href="/profile"  class="topnav-link">Profile</a>
     <a href="/infopage" class="topnav-link active">How it works</a>
   </div>
 </nav>
@@ -206,6 +207,7 @@
           <span class="hiw-key-tag">airia_intervention_log</span>
           <span class="hiw-key-tag">airia_annotation_log</span>
           <span class="hiw-key-tag">airia_unlock_status</span>
+          <span class="hiw-key-tag">airia_user_profile</span>
         </div>
       </div>
     </div>

@@ -157,6 +157,7 @@
   <a href="/" class="topnav-logo">AIRIA</a>
   <div class="topnav-links">
     <a href="/stats"    class="topnav-link active">Your data</a>
+    <a href="/profile"  class="topnav-link">Profile</a>
     <a href="/infopage" class="topnav-link">How it works</a>
   </div>
 </nav>

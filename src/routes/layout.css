@@ -92,12 +92,19 @@
     margin: 0 0 40px;
 }
 
-.hero-url-row {
+.hero-input-wrap {
     display: flex;
-    gap: 0;
+    align-items: stretch;
+    gap: 12px;
     width: 100%;
     max-width: 520px;
     margin-bottom: 10px;
+}
+
+.hero-url-row {
+    display: flex;
+    gap: 0;
+    flex: 1;
     border: 1px solid #e0e0e0;
     border-radius: 8px;
     overflow: hidden;
@@ -131,7 +138,38 @@
 .hero-url-error {
     font-size: 12px;
     color: #dc2626;
-    margin: 0 0 24px;
+    margin: 0 0 8px;
+}
+
+/* ── PDF button — sibling of .hero-url-row, styled to match .hero-url-btn ── */
+
+.hero-pdf-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 14px 22px;
+    background: #000;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 1.5px;
+    cursor: pointer;
+    transition: background 0.15s;
+    user-select: none;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.hero-pdf-btn:hover:not(.loading) { background: #222; }
+.hero-pdf-btn.loading { background: #888; cursor: default; }
+
+.hero-pdf-spinner {
+    letter-spacing: 2px;
+    animation: blink 0.9s steps(1) infinite;
+}
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.25; }
 }
 
 .hero-steps {
@@ -1376,3 +1414,331 @@ main {
 .hiw-privacy-text { font-size: 14px; color: #666; line-height: 1.7; }
 .hiw-privacy-keys { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 .hiw-key-tag { font-size: 11px; font-family: 'SF Mono', monospace; color: #888; background: #f5f5f5; padding: 4px 10px; border-radius: 4px; }
+
+
+/* ════════════════════════════════════════════
+   PROFILE PAGE
+   ════════════════════════════════════════════ */
+
+.profile-page {
+    min-height: 100vh;
+    padding-top: 52px;
+    background: #f9f9f9;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+
+.profile-loading {
+    padding: 80px;
+    text-align: center;
+    font-size: 14px;
+    color: #bbb;
+}
+
+.profile-body {
+    padding: 52px 64px;
+    max-width: 860px;
+    margin: 0 auto;
+}
+
+.profile-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 44px;
+}
+
+.profile-title {
+    font-size: 32px;
+    font-weight: 500;
+    color: #000;
+    letter-spacing: -0.5px;
+    margin: 0 0 8px;
+}
+
+.profile-sub {
+    font-size: 14px;
+    color: #888;
+    line-height: 1.65;
+    margin: 0;
+}
+
+.profile-status-badge {
+    flex-shrink: 0;
+    margin-top: 6px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+.profile-status-badge.complete { background: #000; color: #fff; }
+.profile-status-badge.partial  { background: #f0f0f0; color: #555; }
+.profile-status-badge.empty    { background: #f5f5f5; color: #bbb; }
+
+.profile-section-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #bbb;
+    margin-bottom: 8px;
+}
+
+.profile-section-sub {
+    font-size: 14px;
+    color: #888;
+    line-height: 1.65;
+    margin: 0 0 28px;
+}
+
+.profile-divider {
+    height: 1px;
+    background: #f0f0f0;
+    margin: 44px 0;
+}
+
+/* ── Calibration arc timeline ─────────────────────────────────────── */
+
+.calib-arc {
+    display: flex;
+    flex-direction: column;
+}
+
+.calib-step {
+    display: flex;
+    gap: 20px;
+}
+
+.calib-step-left {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 32px;
+    flex-shrink: 0;
+}
+
+.calib-dot {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1.5px solid #e0e0e0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-family: 'SF Mono', monospace;
+    color: #ccc;
+    flex-shrink: 0;
+    background: #fff;
+    position: relative;
+    z-index: 1;
+}
+.calib-dot.done { background: #000; border-color: #000; color: #fff; font-size: 13px; }
+.calib-dot.next { background: #fafafa; border-color: #ccc; color: #999; }
+
+.calib-line {
+    flex: 1;
+    width: 1px;
+    background: #f0f0f0;
+    margin: 3px 0;
+    min-height: 24px;
+}
+.calib-line.done { background: #000; }
+
+.calib-step-content {
+    padding: 4px 0 32px;
+    flex: 1;
+}
+
+.calib-article-title {
+    font-size: 15px;
+    font-weight: 500;
+    color: #000;
+    margin-bottom: 6px;
+}
+
+.calib-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+}
+
+.calib-meta-item { font-size: 13px; color: #888; }
+.calib-meta-sep  { font-size: 13px; color: #ddd; }
+.calib-interventions { color: #aaa; }
+
+.label-hard { color: #b55; }
+.label-good { color: #5a5; }
+.label-easy { color: #55b; }
+
+.calib-date { font-size: 11px; color: #ccc; }
+
+.calib-next-label {
+    font-size: 14px;
+    color: #aaa;
+    margin-bottom: 8px;
+}
+
+.calib-read-link {
+    font-size: 13px;
+    color: #000;
+    text-decoration: none;
+    border-bottom: 1px solid #000;
+    padding-bottom: 1px;
+}
+.calib-read-link:hover { opacity: 0.6; }
+
+.calib-pending-label { font-size: 14px; color: #ddd; }
+
+/* ── Post-calibration threshold cards ───────────────────────────── */
+
+.threshold-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.threshold-card {
+    background: #fff;
+    border: 1px solid #efefef;
+    border-radius: 10px;
+    padding: 22px 24px;
+}
+
+.threshold-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #bbb;
+    margin-bottom: 8px;
+}
+
+.threshold-val {
+    font-size: 28px;
+    font-weight: 500;
+    color: #000;
+    margin-bottom: 8px;
+    line-height: 1;
+}
+
+.threshold-unit {
+    font-size: 14px;
+    font-weight: 400;
+    color: #aaa;
+}
+
+.threshold-desc {
+    font-size: 13px;
+    color: #888;
+    line-height: 1.6;
+    margin-bottom: 12px;
+}
+
+.threshold-bar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.threshold-bar {
+    flex: 1;
+    height: 3px;
+    background: #f0f0f0;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.threshold-fill {
+    height: 3px;
+    background: #000;
+    border-radius: 2px;
+}
+
+.threshold-bar-label {
+    font-size: 11px;
+    color: #ccc;
+    white-space: nowrap;
+}
+
+.profile-calibrated-note {
+    font-size: 12px;
+    color: #bbb;
+    line-height: 1.6;
+}
+
+/* ── Pre-calibration CTA ─────────────────────────────────────────── */
+
+.calib-incomplete {
+    background: #fff;
+    border: 1px solid #efefef;
+    border-radius: 10px;
+    padding: 32px 36px;
+    text-align: center;
+}
+
+.calib-incomplete-count {
+    font-size: 24px;
+    font-weight: 500;
+    color: #000;
+    margin-bottom: 12px;
+}
+
+.calib-incomplete-desc {
+    font-size: 14px;
+    color: #888;
+    line-height: 1.7;
+    max-width: 480px;
+    margin: 0 auto 24px;
+}
+
+.calib-cta-btn {
+    display: inline-block;
+    padding: 11px 24px;
+    background: #000;
+    color: #fff;
+    font-size: 13px;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: opacity 0.15s;
+}
+.calib-cta-btn:hover { opacity: 0.75; }
+
+/* ── Reset row ───────────────────────────────────────────────────── */
+
+.profile-reset-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 32px;
+}
+
+.profile-reset-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: #000;
+    margin-bottom: 4px;
+}
+
+.profile-reset-sub {
+    font-size: 13px;
+    color: #aaa;
+    line-height: 1.6;
+    max-width: 520px;
+}
+
+.calib-reset-btn {
+    flex-shrink: 0;
+    padding: 9px 20px;
+    background: #fff;
+    color: #888;
+    font-size: 13px;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+.calib-reset-btn:hover { border-color: #b55; color: #b55; }

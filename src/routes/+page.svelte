@@ -26,6 +26,17 @@
     let interventionLog  = lsGet('airia_intervention_log', []);
     let unlockStatus     = lsGet('airia_unlock_status', { level3_unlocked: false, accepted_interventions: 0 });
 
+    const PROFILE_DEFAULT = {
+        calibration_complete: false,
+        calibration_sessions: [],
+        baseline_wpm:         null,
+        wpm_std:              null,
+        charge_threshold:     0.68,
+        slowdown_threshold:   0.75,
+        last_updated:         null
+    };
+    let userProfile = lsGet('airia_user_profile', PROFILE_DEFAULT);
+
     function getTrainingStats() {
         const counts = { too_hard: 0, just_right: 0, too_easy: 0 };
         const labels = { 0: 'too_hard', 1: 'just_right', 2: 'too_easy' };
@@ -49,6 +60,13 @@
     let urlError         = $state("");
     let customText       = $state(null);
     let reading          = $state(false);
+
+    // ─── PDF / paste state ────────────────────────────────────────────────────
+    let pasteInput      = $state("");
+    let isExtractingPdf = $state(false);
+    let pdfError        = $state("");
+    let pdfFilename     = $state("");
+    let pdfFileInput    = $state(null);  // bound to the hidden <input type="file">
 
     function getParagraphs() {
         return customText?.content.split('\n\n') ?? [];
@@ -201,14 +219,79 @@
         }
     }
 
+    // ─── User profile update ─────────────────────────────────────────────────
+    // Called at the end of each article (from submitFeedback) to build / extend
+    // the calibration arc. The first 3 completed articles derive personal
+    // thresholds; subsequent articles keep last_updated current.
+    function updateUserProfile(feedbackLabel) {
+        if (userProfile.calibration_complete) {
+            userProfile = { ...userProfile, last_updated: new Date().toISOString() };
+            lsSet('airia_user_profile', userProfile);
+            return;
+        }
+
+        const stats = getSessionStats();
+        const session = {
+            article_id:         pendingArticleMetadata?.id ?? `article_${Date.now()}`,
+            article_title:      customText?.title ?? 'Unknown',
+            avg_wpm:            stats.avgWpm,
+            wpm_variance:       stats.variance,
+            genre:              customText?.classification?.specific_genre ?? 'general',
+            genre_difficulty:   customText?.classification?.genre_difficulty ?? 0.5,
+            feedback_label:     feedbackLabel,
+            intervention_count: sessionInterventions.length,
+            timestamp:          new Date().toISOString()
+        };
+
+        const newSessions = [...userProfile.calibration_sessions, session];
+
+        if (newSessions.length >= 3) {
+            const wpms        = newSessions.map(s => s.avg_wpm).filter(w => w > 0);
+            const baselineWpm = wpms.reduce((a, b) => a + b, 0) / wpms.length;
+            const wpmStd      = Math.sqrt(
+                wpms.map(w => Math.pow(w - baselineWpm, 2)).reduce((a, b) => a + b, 0) / wpms.length
+            );
+
+            const hardCount = newSessions.filter(s => s.feedback_label === 0).length;
+            const easyCount = newSessions.filter(s => s.feedback_label >= 1).length;
+
+            // Tune charge threshold to reader's struggle tendency
+            let chargeThreshold = 0.68;
+            if (hardCount >= 2)      chargeThreshold = 0.55; // fires earlier for frequent strugglers
+            else if (easyCount >= 2) chargeThreshold = 0.78; // fires later for comfortable readers
+
+            // Tune slowdown threshold to reader's natural WPM variance
+            let slowdownThreshold = 0.75;
+            if (wpmStd > 60)      slowdownThreshold = 0.82; // high natural variance → need stronger dip signal
+            else if (wpmStd < 25) slowdownThreshold = 0.68; // very consistent → any dip is meaningful
+
+            userProfile = {
+                calibration_complete: true,
+                calibration_sessions: newSessions,
+                baseline_wpm:         Math.round(baselineWpm),
+                wpm_std:              Math.round(wpmStd),
+                charge_threshold:     chargeThreshold,
+                slowdown_threshold:   slowdownThreshold,
+                last_updated:         new Date().toISOString()
+            };
+        } else {
+            userProfile = {
+                ...userProfile,
+                calibration_sessions: newSessions,
+                last_updated:         new Date().toISOString()
+            };
+        }
+
+        lsSet('airia_user_profile', userProfile);
+    }
+
     // ─── SNN per-paragraph inference ─────────────────────────────────────────
     // Two trigger paths:
     //   Path 1 — Binary spike: SNN fires too_hard directly (clean signal).
-    //   Path 2 — Charge spike: membrane_charge > 0.68 AND slowdown_ratio > 0.75.
-    //     slowdown > 0.65 means this paragraph was >35% slower than running avg.
-    //     charge > 0.55 means struggle has been accumulating across prior paragraphs.
-    //     Thresholds are intentionally lower than Path 1 to catch fast readers
-    //     whose absolute WPM looks comfortable but whose dip is a real signal.
+    //   Path 2 — Charge spike: membrane_charge > profile.charge_threshold
+    //            AND slowdown_ratio > profile.slowdown_threshold.
+    //     Thresholds are personalized after 3-article calibration; defaults
+    //     are 0.68 / 0.75 until calibration completes.
     //     Only fires if no intervention is already active.
     async function runParagraphSNN(paragraphIndex) {
         const features = getParagraphFeatures(paragraphIndex);
@@ -240,8 +323,8 @@
             const binarySpike = data.spiked && data.spike_class === 'too_hard';
 
             const chargeSpike =
-                data.membrane_charge > 0.68 &&
-                features.slowdown_ratio > 0.75 &&
+                data.membrane_charge > userProfile.charge_threshold &&
+                features.slowdown_ratio > userProfile.slowdown_threshold &&
                 data.spike_class === 'too_hard' &&
                 interventionData === null;
 
@@ -450,6 +533,9 @@
 
     // ─── Feedback ────────────────────────────────────────────────────────────
     function submitFeedback(feedback) {
+        // Update user profile before pendingArticleMetadata is cleared
+        updateUserProfile(feedback);
+
         const sample = {
             features:      Object.values(getNormalized()),
             label:         feedback,
@@ -499,6 +585,8 @@
         localStorage.removeItem('airia_model_weights');
         sampleCount   = 0;
         trainingStats = getTrainingStats();
+        userProfile   = { ...PROFILE_DEFAULT };
+        lsSet('airia_user_profile', userProfile);
     }
 
     function resetSession() {
@@ -527,6 +615,88 @@
     function formatTime(seconds) {
         if (!seconds || isNaN(seconds)) return "0:00";
         return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
+    }
+
+    // ─── PDF extraction ───────────────────────────────────────────────────────
+    // Calls /extract-pdf with FormData. On success, immediately hands off to
+    // loadArticleFromText() — no textarea intermediate step.
+    // Detects scanned PDFs via page_count present but empty text.
+    async function handlePdfUpload(event) {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        pdfFilename     = file.name.replace(/\.pdf$/i, '');
+        isExtractingPdf = true;
+        pdfError        = "";
+        pasteInput      = "";
+
+        try {
+            const form = new FormData();
+            form.append('file', file);
+
+            const res  = await fetch('https://web-production-a3b6.up.railway.app/extract-pdf', {
+                method: 'POST',
+                body: form
+            });
+            const data = await res.json();
+
+            if (data.page_count && !data.text) {
+                pdfError = `This PDF has ${data.page_count} page${data.page_count !== 1 ? 's' : ''} but no extractable text — it appears to be a scanned document. Try a text-based PDF.`;
+            } else if (!data.text) {
+                pdfError = "Could not extract text from this PDF.";
+            } else {
+                pasteInput = data.text;
+                isExtractingPdf = false;
+                if (pdfFileInput) pdfFileInput.value = '';
+                await loadArticleFromText();
+                return;
+            }
+        } catch {
+            pdfError = "Failed to extract PDF. Is the backend running?";
+        }
+
+        isExtractingPdf = false;
+        if (pdfFileInput) pdfFileInput.value = '';
+    }
+
+    // ─── Text / paste ingestion ────────────────────────────────────────────────
+    // Sends raw text to /ingest-text which classifies and structures it,
+    // returning the same shape as /ingest-url.
+    async function loadArticleFromText() {
+        if (!pasteInput.trim()) return;
+        isLoadingUrl = true;
+        urlError     = "";
+        try {
+            const res  = await fetch('https://web-production-a3b6.up.railway.app/ingest-text', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: pasteInput.trim(), title: pdfFilename || '' })
+            });
+            const data = await res.json();
+            if (data.status === "error") { urlError = data.content; isLoadingUrl = false; return; }
+            customText = {
+                title:          data.title,
+                content:        data.content,
+                level:          `${data.estimated_lexile}L (estimated)`,
+                lexile:         data.estimated_lexile,
+                classification: data.classification
+            };
+            pendingArticleMetadata = {
+                id:               `article_${Date.now()}`,
+                url:              pdfFilename ? `pdf:${pdfFilename}` : 'pasted-text',
+                title:            data.title,
+                estimated_lexile: data.estimated_lexile,
+                word_count:       data.word_count,
+                paragraph_count:  data.paragraph_count,
+                classification:   data.classification,
+                timestamp:        new Date().toISOString()
+            };
+            resetSession();
+            pasteInput  = "";
+            pdfFilename = "";
+            pdfError    = "";
+        } catch { urlError = "Failed to load text. Is backend running?"; }
+        isLoadingUrl = false;
     }
 
     // ─── URL ingestion ────────────────────────────────────────────────────────
@@ -672,6 +842,7 @@
     <span class="topnav-logo">AIRIA</span>
     <div class="topnav-links">
         <a href="/stats"    class="topnav-link">Your data</a>
+        <a href="/profile"  class="topnav-link">Profile</a>
         <a href="/infopage" class="topnav-link">How it works</a>
     </div>
 </nav>
@@ -682,20 +853,39 @@
     <div class="hero-content">
         <h1 class="hero-logo">AIRIA</h1>
         <p class="hero-tagline">Adaptive reading, powered by a spiking neural network.</p>
-        <div class="hero-url-row">
-            <input
-                type="text"
-                placeholder="Paste an article URL to begin"
-                bind:value={urlInput}
-                class="hero-url-input"
-                disabled={isLoadingUrl}
-                onkeydown={(e) => e.key === 'Enter' && loadArticleFromUrl()}
-            />
-            <button class="hero-url-btn" onclick={loadArticleFromUrl} disabled={isLoadingUrl}>
-                {isLoadingUrl ? '…' : '→'}
-            </button>
+        <div class="hero-input-wrap">
+            <div class="hero-url-row">
+                <input
+                    type="text"
+                    placeholder="Paste an article URL to begin"
+                    bind:value={urlInput}
+                    class="hero-url-input"
+                    disabled={isLoadingUrl}
+                    onkeydown={(e) => e.key === 'Enter' && loadArticleFromUrl()}
+                />
+                <button class="hero-url-btn" onclick={loadArticleFromUrl} disabled={isLoadingUrl}>
+                    {isLoadingUrl ? '…' : '→'}
+                </button>
+            </div>
+            <label class="hero-pdf-btn" class:loading={isExtractingPdf} title="Upload a PDF">
+                {#if isExtractingPdf}
+                    <span class="hero-pdf-spinner">···</span>
+                {:else}
+                    PDF
+                {/if}
+                <input
+                    type="file"
+                    accept=".pdf"
+                    bind:this={pdfFileInput}
+                    onchange={handlePdfUpload}
+                    disabled={isExtractingPdf || isLoadingUrl}
+                    style="display:none"
+                />
+            </label>
         </div>
         {#if urlError}<p class="hero-url-error">{urlError}</p>{/if}
+        {#if pdfError}<p class="hero-url-error">{pdfError}</p>{/if}
+
         <div class="hero-steps">
             <div class="hero-step">
                 <span class="hero-step-num">01</span>
