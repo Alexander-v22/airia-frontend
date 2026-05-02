@@ -1,6 +1,7 @@
 <script>
     import { onMount } from 'svelte';
     import { texts } from '$lib/texts/index.js';
+    import IntroAnimation from '$lib/components/IntroAnimation.svelte';
 
     // ─── localStorage helpers ────────────────────────────────────────────────
     function lsGet(key, fallback) {
@@ -17,6 +18,17 @@
     }
     function lsSetRaw(key, value) {
         try { localStorage.setItem(key, value); } catch {}
+    }
+
+    // ─── Intro animation ─────────────────────────────────────────────────────
+    // TEMP: remove this line once the animation is confirmed working
+    try { sessionStorage.removeItem('airia_intro_seen'); } catch {}
+    let showIntro = $state(
+        (() => { try { return sessionStorage.getItem('airia_intro_seen') !== '1'; } catch { return true; } })()
+    );
+    function handleIntroDone() {
+        try { sessionStorage.setItem('airia_intro_seen', '1'); } catch {}
+        showIntro = false;
     }
 
     // ─── Persistent state ────────────────────────────────────────────────────
@@ -148,10 +160,11 @@
     }
 
     // ─── SNN membrane state ──────────────────────────────────────────────────
-    let sessionMem1    = $state(null);
-    let sessionMem2    = $state(null);
-    let sessionMem3    = $state(null);
-    let membraneCharge = $state(0);
+    let sessionMem1          = $state(null);
+    let sessionMem2          = $state(null);
+    let sessionMem3          = $state(null);
+    let membraneCharge       = $state(0);
+    let liveMembraneEstimate = $state(0); // real-time proxy updated on every WPM tick
 
     // ─── Intervention state — two-step flow ──────────────────────────────────
     let interventionData      = $state(null);
@@ -159,6 +172,7 @@
     let isLoadingIntervention = $state(false);
     let showingRewrite        = $state(false);
     let usingRewrite          = $state(false);
+    let showingOriginal       = $state(false); // toggle: view original while rewrite is active
     let sessionInterventions  = $state([]);
 
     // ─── Annotation state ────────────────────────────────────────────────────
@@ -184,9 +198,10 @@
     let timerInterval;
 
     function startTimer() {
-        paragraphStartTime = Date.now();
-        elapsedTime = 0;
-        reading = false;
+        paragraphStartTime   = Date.now();
+        elapsedTime          = 0;
+        reading              = false;
+        liveMembraneEstimate = 0;
         clearInterval(timerInterval);
     }
 
@@ -196,6 +211,18 @@
         paragraphStartTime = Date.now();
         timerInterval = setInterval(() => {
             elapsedTime = (Date.now() - paragraphStartTime) / 1000;
+            // Live membrane proxy: needs at least 3s of data for a stable WPM reading.
+            // slowdownEst = 0 when no prior baseline exists (avgWpm = 0) so the bar
+            // stays neutral on the very first paragraph.
+            if (elapsedTime >= 3) {
+                const currentWpm  = getCurrentWPM();
+                const avgWpm      = getSessionStats().avgWpm;
+                const slowdownEst = avgWpm > 0
+                    ? Math.min(avgWpm / Math.max(currentWpm, 1), 1)
+                    : 0;
+                const bpNorm = Math.min(backPresses / 10, 1);
+                liveMembraneEstimate = Math.min((slowdownEst * 0.6) + (bpNorm * 0.4), 1);
+            }
         }, 100);
 
         // Pre-fetch annotations for the current paragraph in the background
@@ -287,13 +314,25 @@
 
     // ─── SNN per-paragraph inference ─────────────────────────────────────────
     // Two trigger paths:
-    //   Path 1 — Binary spike: SNN fires too_hard directly (clean signal).
-    //   Path 2 — Charge spike: membrane_charge > profile.charge_threshold
-    //            AND slowdown_ratio > profile.slowdown_threshold.
+    //   Path 1 — Binary spike: SNN backend fires too_hard directly.
+    //   Path 2 — Charge spike: membrane_charge > charge_threshold AND
+    //            slowdown_ratio > slowdown_threshold, independent of
+    //            spike_class. Fires on behavioral signal alone so charge
+    //            can accumulate to an intervention without the SNN having
+    //            already classified the paragraph as too_hard (which was
+    //            the circular dependency that made this path dead code).
     //     Thresholds are personalized after 3-article calibration; defaults
     //     are 0.68 / 0.75 until calibration completes.
     //     Only fires if no intervention is already active.
     async function runParagraphSNN(paragraphIndex) {
+        // Para 0 has no prior paragraph to form a baseline, so slowdown_ratio
+        // is always 1.0 regardless of actual reading speed. Skip it entirely
+        // to avoid false positives and misleading membrane accumulation.
+        if (paragraphIndex === 0) {
+            console.log('SNN skipped — paragraph 0 has no baseline for slowdown ratio');
+            return;
+        }
+
         const features = getParagraphFeatures(paragraphIndex);
         if (!features) {
             console.log('SNN skipped — paragraph not long enough to record metrics');
@@ -322,14 +361,18 @@
 
             const binarySpike = data.spiked && data.spike_class === 'too_hard';
 
+            // spike_class gate removed — charge path now fires on membrane +
+            // slowdown alone, independent of whether the SNN classified this
+            // paragraph as too_hard.
             const chargeSpike =
                 data.membrane_charge > userProfile.charge_threshold &&
                 features.slowdown_ratio > userProfile.slowdown_threshold &&
-                data.spike_class === 'too_hard' &&
                 interventionData === null;
 
+            console.log(`[SNN] para ${paragraphIndex} — membrane: ${data.membrane_charge.toFixed(3)}, slowdown: ${features.slowdown_ratio.toFixed(3)}, binary: ${binarySpike}, charge: ${chargeSpike}`);
+
             if (binarySpike || chargeSpike) {
-                console.log(`Intervention triggered — binary: ${binarySpike}, charge: ${chargeSpike}, membrane: ${data.membrane_charge.toFixed(2)}, slowdown: ${features.slowdown_ratio.toFixed(2)}`);
+                console.log(`Intervention triggered — binary: ${binarySpike}, charge: ${chargeSpike}`);
                 await fetchIntervention(paragraphIndex);
             }
         } catch (e) {
@@ -398,6 +441,7 @@
         interventionParagraph = null;
         showingRewrite        = false;
         usingRewrite          = false;
+        showingOriginal       = false;
     }
 
     // ─── Annotation ──────────────────────────────────────────────────────────
@@ -607,6 +651,7 @@
         interventionParagraph = null;
         showingRewrite        = false;
         usingRewrite          = false;
+        showingOriginal       = false;
         sessionInterventions  = [];
         paragraphAnnotations  = {};
         startTimer();
@@ -820,10 +865,17 @@
     }
 
     // ─── Derived ─────────────────────────────────────────────────────────────
-    let membranePercent = $derived(Math.round(membraneCharge * 100));
+    // During reading: show the live behavioral estimate so the bar feels
+    // responsive. When reading stops (Next pressed, backend responds, startTimer
+    // called), snap to the real backend membrane_charge value.
+    let membranePercent = $derived(
+        reading
+            ? Math.round(liveMembraneEstimate * 100)
+            : Math.round(membraneCharge * 100)
+    );
 
     let activeParagraphText = $derived(
-        usingRewrite && interventionParagraph === currentParagraph
+        usingRewrite && interventionParagraph === currentParagraph && !showingOriginal
             ? (interventionData?.rewritten ?? getParagraphs()[currentParagraph])
             : getParagraphs()[currentParagraph]
     );
@@ -834,6 +886,17 @@
         !usingRewrite
     );
 </script>
+
+<svelte:head>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500&family=Inter:wght@300;400;500&display=swap"
+        rel="stylesheet"
+    />
+</svelte:head>
+
+{#if showIntro}
+    <IntroAnimation onDone={handleIntroDone} />
+{/if}
 
 <!-- ══════════════════════════════════════════════════════════════════
      TOP NAV
@@ -1027,6 +1090,9 @@
                 <div class="para-card">
                     {#if usingRewrite && interventionParagraph === currentParagraph}
                         <p class="para-text">{activeParagraphText}</p>
+                        <button class="rewrite-toggle" onclick={() => showingOriginal = !showingOriginal}>
+                            {showingOriginal ? 'Show rewrite' : 'Show original'}
+                        </button>
                     {:else if annotationMode && paragraphAnnotations[currentParagraph]?.length > 0}
                         <p class="para-text">{@html buildAnnotatedHTML(currentParagraph)}</p>
                     {:else}

@@ -16,14 +16,15 @@
     padding: 0 36px;
     background: rgba(255,255,255,0.92);
     backdrop-filter: blur(8px);
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid #e0e0e0;
     z-index: 100;
 }
 
 .topnav-logo {
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 5px;
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 1.04rem;
+    font-weight: 400;
+    letter-spacing: 0.3em;
     color: #000;
     text-decoration: none;
 }
@@ -34,8 +35,10 @@
 }
 
 .topnav-link {
-    font-size: 12px;
-    color: #aaa;
+    font-size: 0.76rem;
+    font-weight: 400;
+    color: #111;
+    letter-spacing: 0.04em;
     text-decoration: none;
     transition: color 0.15s;
 }
@@ -77,19 +80,22 @@
 }
 
 .hero-logo {
-    font-size: 52px;
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 4.8rem;
     font-weight: 300;
-    letter-spacing: 18px;
+    letter-spacing: 0.4em;
     color: #000;
-    margin: 0 0 12px;
+    margin: 0 0 0.5rem;
     line-height: 1;
 }
 
 .hero-tagline {
-    font-size: 14px;
-    color: #bbb;
-    letter-spacing: 0.3px;
-    margin: 0 0 40px;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.88rem;
+    font-weight: 300;
+    color: #555;
+    letter-spacing: 0.08em;
+    margin: 0 0 2rem;
 }
 
 .hero-input-wrap {
@@ -105,22 +111,26 @@
     display: flex;
     gap: 0;
     flex: 1;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    overflow: hidden;
-    background: #fff;
+    border: none;
+    border-bottom: 1.5px solid #111;
+    border-radius: 0;
+    background: transparent;
     transition: border-color 0.15s;
 }
-.hero-url-row:focus-within { border-color: #000; }
+.hero-url-row:focus-within { border-bottom-color: #000; }
 
 .hero-url-input {
     flex: 1;
     padding: 14px 18px;
     border: none;
     outline: none;
-    font-size: 14px;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.8rem;
     color: #333;
     background: transparent;
+}
+.hero-url-input::placeholder {
+    color: #999;
 }
 
 .hero-url-btn {
@@ -128,7 +138,8 @@
     background: #000;
     color: #fff;
     border: none;
-    font-size: 18px;
+    border-radius: 2px;
+    font-size: 0.76rem;
     cursor: pointer;
     transition: background 0.15s;
 }
@@ -150,8 +161,8 @@
     background: #000;
     color: #fff;
     border: none;
-    border-radius: 8px;
-    font-size: 12px;
+    border-radius: 2px;
+    font-size: 0.76rem;
     font-weight: 500;
     letter-spacing: 1.5px;
     cursor: pointer;
@@ -177,42 +188,48 @@
     grid-template-columns: 1fr 1fr;
     gap: 16px;
     width: 100%;
-    margin: 32px 0 28px;
+    margin: 3rem 0 28px;
     text-align: left;
 }
 
 .hero-step {
-    background: #fff;
-    border: 1px solid #efefef;
-    border-radius: 10px;
-    padding: 20px 22px;
+    background: white;
+    border-left: 2px solid #111;
+    border-radius: 0;
+    padding: 1.5rem 1.75rem;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
 }
 
 .hero-step-num {
-    font-size: 10px;
+    display: block;
+    font-size: 0.6rem;
     font-family: 'SF Mono', monospace;
-    color: #ccc;
-    letter-spacing: 1px;
+    color: #999;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.75rem;
 }
 
 .hero-step-title {
-    font-size: 14px;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.92rem;
     font-weight: 500;
-    color: #000;
+    color: #111;
 }
 
 .hero-step-desc {
-    font-size: 13px;
-    color: #888;
-    line-height: 1.65;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.76rem;
+    color: #444;
+    line-height: 1.7;
 }
 
 .hero-learn {
-    font-size: 12px;
-    color: #aaa;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.76rem;
+    color: #666;
+    letter-spacing: 0.05em;
     text-decoration: none;
     transition: color 0.15s;
 }
@@ -635,6 +652,20 @@ main {
     padding: 3px 9px;
     border-radius: 3px;
 }
+
+.rewrite-toggle {
+    display: block;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0 0 14px;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.7rem;
+    color: #999;
+    cursor: pointer;
+    text-decoration: none;
+}
+.rewrite-toggle:hover { text-decoration: underline; }
 
 .intervention-loading {
     border: 1px dashed #e0e0e0;

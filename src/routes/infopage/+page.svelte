@@ -198,8 +198,8 @@
     <div class="hiw-privacy">
       <div class="hiw-privacy-icon">⊘</div>
       <div>
-        <div class="hiw-privacy-title">Your data never leaves your browser</div>
-        <div class="hiw-privacy-text">Training samples, model weights, article history, intervention logs, and annotation logs are stored only in your browser's localStorage. The backend is stateless compute — it receives data, processes it, returns a result, and immediately forgets everything. Nothing is logged or stored server-side. Clearing your browser data resets everything.</div>
+        <div class="hiw-privacy-title">Your data is always private</div>
+        <div class="hiw-privacy-text">Training samples, model weights, article history, intervention logs, and annotation logs are stored only in your browser's localStorage. The backend is stateless compute, it receives data, processes it, returns a result, and immediately forgets everything. Nothing is logged or stored server-side. Clearing your browser data resets everything.</div>
         <div class="hiw-privacy-keys">
           <span class="hiw-key-tag">airia_training_samples</span>
           <span class="hiw-key-tag">airia_model_weights</span>
