@@ -3,6 +3,8 @@
     import { texts } from '$lib/texts/index.js';
     import IntroAnimation from '$lib/components/IntroAnimation.svelte';
 
+    const API_URL = import.meta.env.VITE_API_URL;
+
     // ─── localStorage helpers ────────────────────────────────────────────────
     function lsGet(key, fallback) {
         try {
@@ -167,13 +169,13 @@
     let liveMembraneEstimate = $state(0); // real-time proxy updated on every WPM tick
 
     // ─── Intervention state — two-step flow ──────────────────────────────────
-    let interventionData      = $state(null);
-    let interventionParagraph = $state(null);
-    let isLoadingIntervention = $state(false);
-    let showingRewrite        = $state(false);
-    let usingRewrite          = $state(false);
-    let showingOriginal       = $state(false); // toggle: view original while rewrite is active
-    let sessionInterventions  = $state([]);
+    let interventionData        = $state(null);
+    let interventionParagraph   = $state(null);
+    let isLoadingIntervention   = $state(false);
+    let showingRewrite          = $state(false);
+    let usingRewrite            = $state(false);
+    let showingOriginal         = $state(false); // toggle: view original while rewrite is active
+    let sessionInterventions    = $state([]);
 
     // ─── Annotation state ────────────────────────────────────────────────────
     // Annotations are pre-fetched when the user hits Start on a paragraph,
@@ -345,7 +347,7 @@
 
             console.log(`SNN para ${paragraphIndex} features:`, features);
 
-            const res  = await fetch('https://web-production-a3b6.up.railway.app/predict-paragraph', {
+            const res  = await fetch(`${API_URL}/predict-paragraph`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -393,12 +395,13 @@
             const genreDifficulty = customText?.classification?.genre_difficulty ?? 0.5;
             const specificGenre   = customText?.classification?.specific_genre ?? 'general';
 
-            const res  = await fetch('https://web-production-a3b6.up.railway.app/intervene', {
+            const res  = await fetch(`${API_URL}/intervene`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ paragraph: paragraphText, genre_difficulty: genreDifficulty, specific_genre: specificGenre })
             });
             const data = await res.json();
+            showingRewrite   = false;
             interventionData = data;
 
             const event = {
@@ -454,7 +457,7 @@
         isLoadingAnnotation = true;
         try {
             const paragraphText = getParagraphs()[paragraphIndex];
-            const res = await fetch('https://web-production-a3b6.up.railway.app/annotate', {
+            const res = await fetch(`${API_URL}/annotate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -563,7 +566,7 @@
             const weights = lsGetRaw('airia_model_weights');
             const payload = { ...getNormalized() };
             if (weights) payload.weights = weights;
-            const res  = await fetch('https://web-production-a3b6.up.railway.app/predict', {
+            const res  = await fetch(`${API_URL}/predict`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -610,7 +613,7 @@
             const weights = lsGetRaw('airia_model_weights');
             const payload = { samples: trainingSamples };
             if (weights) payload.weights = weights;
-            const res    = await fetch('https://web-production-a3b6.up.railway.app/retrain', {
+            const res    = await fetch(`${API_URL}/retrain`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -679,7 +682,7 @@
             const form = new FormData();
             form.append('file', file);
 
-            const res  = await fetch('https://web-production-a3b6.up.railway.app/extract-pdf', {
+            const res  = await fetch(`${API_URL}/extract-pdf`, {
                 method: 'POST',
                 body: form
             });
@@ -712,7 +715,7 @@
         isLoadingUrl = true;
         urlError     = "";
         try {
-            const res  = await fetch('https://web-production-a3b6.up.railway.app/ingest-text', {
+            const res  = await fetch(`${API_URL}/ingest-text`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ text: pasteInput.trim(), title: pdfFilename || '' })
@@ -750,7 +753,7 @@
         isLoadingUrl = true;
         urlError     = "";
         try {
-            const res  = await fetch('https://web-production-a3b6.up.railway.app/ingest-url', {
+            const res  = await fetch(`${API_URL}/ingest-url`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: urlInput.trim() })
@@ -795,7 +798,7 @@
         const existingWeights = lsGetRaw('airia_model_weights');
         if (!existingWeights) {
             try {
-                const res  = await fetch('https://web-production-a3b6.up.railway.app/base-weights');
+                const res  = await fetch(`${API_URL}/base-weights`);
                 const data = await res.json();
                 if (data.weights) lsSetRaw('airia_model_weights', data.weights);
             } catch {}
@@ -864,6 +867,66 @@
         animFrame = requestAnimationFrame(draw);
     }
 
+    // ─── Dev tester — forced interventions ───────────────────────────────────
+    // Shift+2 → Level 2, Shift+3 → Level 3. Only fires while reading === true
+    // and no intervention is already active. Bypasses SNN entirely.
+    // Removed on cleanup to avoid duplicate listeners across HMR reloads.
+    async function devForceIntervention(level) {
+        isLoadingIntervention = true;
+        interventionData      = null;
+        interventionParagraph = currentParagraph;
+        showingRewrite        = false;
+        usingRewrite          = false;
+
+        try {
+            const paragraphText    = getParagraphs()[currentParagraph];
+            const specificGenre    = customText?.classification?.specific_genre ?? 'general';
+            const forcedDifficulty = level === 3 ? 0.85 : 0.6;
+
+            const res  = await fetch(`${API_URL}/intervene`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paragraph: paragraphText, genre_difficulty: forcedDifficulty, specific_genre: specificGenre })
+            });
+            const data = await res.json();
+            interventionParagraph = currentParagraph;
+            showingRewrite        = false;
+            interventionData      = data;
+
+            sessionInterventions = [...sessionInterventions, {
+                article_id:       pendingArticleMetadata?.id ?? 'unknown',
+                paragraph_index:  currentParagraph,
+                level:            data.level,
+                rewrite_strength: data.rewrite_strength,
+                genre_difficulty: forcedDifficulty,
+                primer_only:      true,
+                rewrite_used:     false,
+                timestamp:        new Date().toISOString()
+            }];
+        } catch (e) {
+            console.log('[DEV] Intervention fetch failed', e);
+        }
+        isLoadingIntervention = false;
+    }
+
+    $effect(() => {
+        function handleDevKeydown(e) {
+            if (!reading) return;
+            if (!e.shiftKey) return;
+            if (e.code === 'Digit2' && interventionData === null) {
+                e.preventDefault();
+                console.log('[DEV] Level 2 forced');
+                devForceIntervention(2);
+            } else if (e.code === 'Digit3' && interventionData === null) {
+                e.preventDefault();
+                console.log('[DEV] Level 3 forced');
+                devForceIntervention(3);
+            }
+        }
+        document.addEventListener('keydown', handleDevKeydown);
+        return () => document.removeEventListener('keydown', handleDevKeydown);
+    });
+
     // ─── Derived ─────────────────────────────────────────────────────────────
     // During reading: show the live behavioral estimate so the bar feels
     // responsive. When reading stops (Next pressed, backend responds, startTimer
@@ -882,6 +945,7 @@
 
     let showIntervention = $derived(
         interventionData !== null &&
+        !!interventionData.primer &&
         interventionParagraph === currentParagraph &&
         !usingRewrite
     );
@@ -1118,9 +1182,9 @@
                     </div>
                 </div>
 
-                {#if isLoadingIntervention}
+                {#if isLoadingIntervention || (interventionData !== null && !interventionData.primer && interventionParagraph === currentParagraph && !usingRewrite)}
                     <div class="intervention-loading">
-                        <span class="int-loading-text">AIRIA is analyzing this paragraph…</span>
+                        <span class="int-loading-text">Loading context…</span>
                     </div>
                 {/if}
 
