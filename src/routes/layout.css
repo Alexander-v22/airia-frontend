@@ -1360,7 +1360,6 @@ main {
     border: 1px solid #000;
 }
 
-/* ── Annotation mode section ─────────────────────────────────────────── */
 .hiw-annotation-block {
     display: grid;
     grid-template-columns: 1fr 1fr;
